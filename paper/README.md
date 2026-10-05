@@ -8,6 +8,12 @@ kernel/user probe as one reference implementation. Product adoption does not
 require a Linux module. The protected-value and transaction-service examples
 are proposed adaptations, not evaluated case studies.
 
+The historical motivation couples background scenarios that may activate latent
+defects with an interruptible dependent computation that exposes resulting
+corruption. The current injection campaign evaluates only the observation side.
+The proposed comparative study separates dependency retention and background
+scenarios as two experimental factors; no activation benefit is claimed as measured.
+
 Publication author details are awaiting user confirmation. The current anonymous
 block is temporary and must be replaced before upload. No author identities,
 affiliations, funding, conflicts or historical data are inferred. See
