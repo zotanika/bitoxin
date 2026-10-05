@@ -43,3 +43,11 @@ limitations of PM coverage, cache/DRAM reach, swap, security and failure masking
 The user's explicit rewrite instruction follows the in-chat design and authorizes
 implementation. Work in the clean current checkout on codex/bitoxin-qa-rewrite;
 no unnecessary worktree or repeated design approval. Keep changes reviewable.
+
+## Clarification: product applications (2026-10-05)
+The user clarified that Compuon/HESM should borrow the concept, not deploy a Linux
+module. The application guide and white paper now describe dependent product-state
+sequences, independent models and checkpoints at contract-valid lifecycle boundaries.
+The existing system probe remains a reference realization; product integration is
+proposed, not implemented or validated by the probe's tests. Other repositories
+remain read-only.

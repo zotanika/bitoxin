@@ -130,8 +130,8 @@ def page(canvas, doc):
         canvas.setFont('Helvetica-Bold', 40)
         canvas.drawString(MARGIN, H - 116, 'BITOXIN 2')
         canvas.setFont('KR', 19)
-        canvas.drawString(MARGIN, H - 154, '시스템 상태 손상을 드러내는')
-        canvas.drawString(MARGIN, H - 184, '선점 가능한 QA 프로브')
+        canvas.drawString(MARGIN, H - 154, '상태의 의존 관계와')
+        canvas.drawString(MARGIN, H - 184, '오류 관측을 설계하는 QA')
         canvas.setFillColor(colors.HexColor('#C5D8E4'))
         canvas.setFont('KR', 9)
         canvas.drawString(MARGIN, H - 217, '2026.10.05  /  구현 버전 2.0  /  한국어 기술 백서')
@@ -229,7 +229,7 @@ def main():
         story.extend(parse_section(section, reference=section.strip().startswith('# 참고자료')))
     out.parent.mkdir(parents=True, exist_ok=True)
     doc = SimpleDocTemplate(str(out), pagesize=A4, rightMargin=MARGIN, leftMargin=MARGIN,
-                            topMargin=55, bottomMargin=51, title='BITOXIN 2 - 선점 가능한 QA 프로브',
+                            topMargin=55, bottomMargin=51, title='BITOXIN 2 - 상태 의존성과 오류 관측을 설계하는 QA',
                             author='BITOXIN', subject='시스템 상태 손상 검출 설계와 QA 검증 방법')
     doc.build(story, onFirstPage=page, onLaterPages=page)
     print(out)

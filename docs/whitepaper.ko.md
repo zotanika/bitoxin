@@ -1,13 +1,13 @@
 # BITOXIN 2
-## 시스템 상태 손상을 드러내는 선점 가능한 QA 프로브
+## 상태의 의존 관계와 오류 관측을 설계하는 QA
 
 기술 백서 · 2026년 10월 5일 · 구현 버전 2.0
 
 **검사 중인 계산이 중단되었다가 다시 이어져도, 그 상태는 보존되어야 한다.**
 
-BITOXIN은 이 요구를 검사 가능한 작은 계산과 메모리 상태로 표현한다. 독립된 검사 스레드를 QA 부하 및 sleep/wakeup 시나리오와 병행하고, 관측된 불일치를 자동화 시스템이 판정할 수 있는 실패로 남긴다. 전원 시퀀스의 내부를 직접 조작하지 않아도, 그 전후에 보존되어야 하는 상태가 실제로 유지되는지 시험할 수 있다.
+BITOXIN에서 차용할 개념은 실제 상태를 다음 연산으로 이어 주고, 중간 손상이 관측 가능한 실패로 드러나도록 검사하는 것이다. 독립된 기대값을 유지하면서 연산·스케줄링·수명 전이를 통과시킨다. 원래의 sleep/wakeup 병행 검사는 이 개념을 시스템 상태 보존에 적용한 사례다.
 
-이 백서는 2018년 원안의 실무적 목적을 유지하면서, 알고리즘의 검증 가능한 성질과 적용 한계를 다시 정리한다. 재작성은 ARM64 범용 레지스터 의존 연쇄, 양방향 비트 순회, 전체 버퍼 검증, 지속되는 검사 상태, 구조화된 오류 보고를 구현한다. Linux 커널 모듈과 일반 사용자 프로세스가 같은 검사 엔진을 사용한다.
+이 백서는 개념과 참조 구현을 구분한다. 2~7절과 11절은 GPR·메모리 검사 구현과 검증 증거를 다룬다. 8~10절은 같은 사고방식을 제품 자체의 QA에 적용하는 설계다. Compuon·HESM에 Linux 모듈을 배치하자는 제안이 아니며, LFSR나 어셈블리도 개념 차용의 필수 요소가 아니다.
 
 > 핵심 주장: 특정 QA 시나리오 아래에서 발생한 상태 손상을 더 관측하기 쉽게 만들 수 있다. 임의의 미발견 결함을 일정한 확률이나 시간 안에 찾아낸다는 보장은 주장하지 않는다.
 
@@ -207,94 +207,102 @@ q_i = P(D_i | no earlier detection, W)
 
 ---page---
 
-# 8. QA 유효성을 평가하는 실험
+# 8. 개념을 제품 QA로 옮기고 평가하기
 
-첫 실험은 새 결함의 수집보다 비교 가능한 조건을 만드는 데 집중한다. 동일한 제품 시나리오에 A: BITOXIN 없음, B: 비슷한 자원 압력의 일반 부하, C: BITOXIN 병행을 적용한다. 일반 부하와 프로브의 자원 사용을 완전히 맞추기 어렵다면 그 차이를 측정해 보고한다. stressapptest는 무작위 메모리·I/O 트래픽과 데이터 검사를 조합하는 비교 가능한 접근의 한 예다. [8]
+차용할 단위는 커널 모듈이 아니라 검사 구조다. 제품의 실제 상태를 의존하는 연산에 계속 전달하고, 그 상태가 살아 있는 동안 허용된 사건을 끼워 넣는다. 독립된 기준 모델과 비교하여 값·수명·요청 식별의 어긋남을 드러낸다. 사건 순서 포괄성은 별도로 설계할 수 있으며, LFSR 버퍼 순회와 같은 개념은 아니다. [13]
 
-### 기록할 조건
+### 공통 실행 구조
 
-제품 및 검사기 바이너리, BSP/kernel 설정, firmware, 보드 revision, 장비 ID, seed, worker 수, 버퍼 크기, chunk, pause, freezer 설정을 남긴다. 실제 PM 전이, 온도·전압 범위, 부하량 및 시험 순서를 함께 기록한다. 가능하면 순서를 무작위화하고 여러 장비에서 반복한다.
+1. 알려진 제품 상태와 독립된 기대 상태를 준비한다.
+2. 제품은 직전의 실제 결과로 다음 연산을 수행하고, 기준 모델은 같은 의도된 연산을 따로 계산한다.
+3. 지원되는 스케줄링·소유권·세션·통신 경계에서 중단과 재개를 배치한다. PM은 가능한 조건 중 하나다.
+4. 중간 검사와 최종 검사를 함께 둔다. 첫 불일치의 연산 번호, 기대값, 실제값과 사건 이력을 남긴다.
 
-### 판정 지표
+실제 결과로 기대값을 갱신하거나 매 단계 정답으로 객체를 재생성하면 손상을 숨길 수 있다. 0 곱셈처럼 정보를 지우는 연산과 서로 상쇄되는 역연산도 주의한다. 항등 관계·왕복 검사는 유용하지만 독립된 정답과 다양한 중간 검사를 대신하지 않는다. [7]
 
-| 지표 | 해석 |
+### 무엇과 비교할 것인가
+
+| 비교군 | 관측할 기여 |
 |---|---|
-| 첫 유효 실패 시간 | 시작점·중단 조건을 고정; 실패가 없던 실행도 포함 |
-| 재현율 | 실패 횟수 / 유효 반복 횟수와 시험 조건을 함께 보고 |
-| 고유 확인 결함 | 같은 원인으로 반복된 crash와 구분 |
-| 검사기 거짓 실패 | 장비 결함으로 오인한 검사기·설정 결함 |
-| 관측·복구 비용 | 로그 손실, reboot, 원인 분석 시간, QA 처리량 |
-| 조건 도달률 | 실제 sleep·idle·장치 전이 횟수와 residency |
+| A: 독립된 짧은 검사 | 기존 기능 검사 기준선 |
+| B: 상태를 이어 쓰는 검사 | 이력·연산 의존성의 효과 |
+| C: B + 허용된 사건 교란 | 상태 전이와 타이밍 조합의 효과 |
 
-실패한 실행만 평균 내면 발견 시간을 과소평가할 수 있다. 관측 종료까지 실패하지 않은 실행은 우측 중도절단 자료로 남긴다. 소규모 실험에서는 과도한 통계적 정밀도를 주장하기보다 원시 횟수·시간·조건을 먼저 제시한다.
+연산 수·종류·관측 시간과 자원 예산을 가능한 한 맞춘다. 길어진 시험이 더 많은 연산을 수행했다는 이유만으로 의존성의 효과라고 판단하지 않는다. 통제된 시험용 손상 주입은 검출 경로를 검증하지만 실제 결함의 발생 빈도를 알려 주지는 않는다.
 
-### 최소 실행 기록
+### 증거와 판정
+
+빌드·설정·fixture·seed·연산열·사건열·기대값·실제값을 보존한다. seed는 연산 순서를 재현할 뿐 스케줄링까지 재현하지 않는다. 실패열을 줄일 때에도 오류를 만드는 상태 이력을 유지한다.
+
+고유 확인 결함, 거짓 실패, 첫 유효 실패까지의 시간, 재현 분모와 실행 비용을 보고한다. 실패하지 않은 실행도 자료에 포함한다. 허용되지 않은 데이터 경쟁을 제품 결함으로 오인하지 않도록 동기화 계약과 예상 거부 결과를 명시한다. 제품 적용 효과는 앞으로 이 비교로 측정해야 한다.
+
+---page---
+
+# 9. Compuon: 보호 값의 이력을 이어 검사하기
+
+요청된 compuon-dev 경로는 현재 환경에 없으므로 인접한 compuon/core를 잠정 참조했다. 이 절의 출발점은 기존 산술·복사·세션 수명 테스트다. 실제 적용 전 대상 저장소와 빌드 설정을 확인해야 한다. 참조한 Core HEAD는 517f1a1b1206212bb15355e0731bf2d9fb81de17이다. [11]
+
+### 실제 보호 객체가 다음 연산의 입력이 된다
+
+짧은 산술 검사를 긴 의존 연산열로 확장한다. 보호 객체를 계속 사용하고, 별도 기준 모델이 동일한 연산의 기대값을 계산한다. 예를 들어 다음 연산열은 값과 복사 독립성을 함께 검사한다.
 
 ```text
-run_id / boot_id / board_id / build hashes
-scenario / seed / backend / memory / threads / chunk / pause / freezer
-PM trace + product assertions + before/after probe status
-outcome: complete | interrupted | corruption | product_failure
-         setup_failure | unexplained_reset_or_hang | not_run
+protected x = 37; reference r = 37
+x += 11; r += 11
+copy x to y; independently copy r to s
+[permitted scheduling boundary]
+y *= 3; s *= 3
+x -= 5; r -= 5
+verify protected x == 43; protected y == 144
+continue from these objects
 ```
 
-seed만 같아도 스케줄링과 물리적 timing은 달라질 수 있다. 확인된 결함을 수정한 뒤 같은 시나리오를 반복해 실패가 사라지는지도 검증한다. 프로브가 통과했다는 사실만으로 제품의 품질을 승인하지 않는다.
+정수 범위를 제한해 검사기 자체의 overflow를 피한다. 평문 cache를 가진 backend에서는 cache 값만 확인하지 말고 실제 보호 상태의 검증 경로도 확인한다. deferred 테스트는 세션 키를 통한 검증 경로를 보여 준다. 보호 기능을 끈 빌드와 보호 빌드의 결과를 구분한다.
+
+### 세션 전이는 계약에 따라 연결한다
+
+init·rekey·shutdown 뒤 어떤 객체가 유효한지는 제품 계약으로 정한다. 이전 handle이 무효화되는 전이라면 예상 거부를 검사하고 다음 세대를 만든다. 보존을 약속한 전이라면 같은 상태로 계산을 이어 간다. 모든 기능을 비활성화해도 통과하는 시험이 되지 않도록 정상 동작 대조 검사도 둔다.
+
+기존의 0 항등식·identity fold 검사는 그 성질을 확인하는 데 유효하다. 다만 긴 오류 탐색 연산열을 0이나 상쇄 연산으로만 구성하면 손상이 사라질 수 있다. 다양한 비영 값, 중간 비교, 통제된 손상 주입으로 오류가 실제 검증에 도달하는지 확인한다.
+
+첫 구현 단위는 기존 테스트 안의 seed 기반 연산열 생성기와 독립된 값·수명 모델이다. 별도 Linux 모듈이나 runtime hook은 필요하지 않다. 이 제안은 아직 제품에 구현되지 않았으며, 통과가 암호학적 안전성이나 anti-cheat 강도를 입증하지도 않는다.
 
 ---page---
 
-# 9. Compuon에 적용하는 방법
+# 10. HESM: 요청과 결과의 연결을 검사하기
 
-요청된 compuon-dev 경로는 현재 작업 환경에서 발견되지 않았다. 이 절은 인접한 compuon/core 작업 사본의 README와 테스트 구조를 잠정 참조했다. 실제 적용 전에 대상 저장소·브랜치·빌드 설정을 다시 확인해야 한다. 참조한 Core HEAD는 517f1a1b1206212bb15355e0731bf2d9fb81de17이다. [11]
+HESM에서는 실제 요청·공유 버퍼·세션 상태가 실행과 응답까지 이어지는 관계를 검사 대상으로 삼는다. 열람한 작업 트리는 수정 상태였으므로 HEAD만으로 참조 내용을 재현할 수 없다. 이 절은 session·shared window·CKKS fixture 테스트에 근거한 확장 제안이다. [12]
 
-이 Core는 C++17 정적 라이브러리로, 보호된 값과 세션·회전 및 검증 프로토콜을 다룬다. 프로브를 라이브러리 안에 삽입하기 전에, 동일 장비에서 기존 테스트와 별도 사용자 프로세스를 병행하는 방식으로 시작할 수 있다.
+### 연결된 트랜잭션을 유지한다
 
-### 제안하는 순서
-
-1. 기존 빌드와 compuon_tests / compuon_sync_tests를 단독 실행하고 baseline을 보존한다.
-2. 같은 바이너리와 입력으로 테스트를 반복하면서 bitoxin-run을 병행한다. 프로브와 제품의 결과를 별도 기록한다.
-3. 유효한 init/use/rotate/shutdown, 세션 및 freshness/rejection 동작을 스케줄링 압력과 함께 반복한다.
-4. 지원되는 suspend/resume 조건을 추가한다. code generation seed와 생성된 바이너리도 보존한다.
+기존 session fixture에는 BEGIN → WRITE_REF/WRITE → EXECUTE → READ와 정답 비교가 있다. 알려진 abcdef 입력에 fedcba를 기대하는 사례, 하나의 입력 tag 아래 WRITE_REF와 WRITE를 혼합하는 사례가 출발점이다.
 
 ```text
-Terminal A: bitoxin-run --kib 1024 --threads 1 --passes 0 --seed 1
-Terminal B: ctest --test-dir <verified-build> -C Release --output-on-failure
+known input + independent expected result
+  -> BEGIN -> WRITE_REF / WRITE -> EXECUTE -> READ
+  -> check request identity, status, length and expected bytes
+  -> distinct next input; retain service and buffer history
 ```
 
-프로브를 signal로 끝내면 상태는 interrupted이고 종료 코드는 130이다. 이를 검증 주기 완료와 혼동하지 않는다. 제품 테스트가 끝났다는 사실과 프로브가 수행한 완료 주기 수를 각각 남긴다.
+매번 서비스를 초기화하지 않고 여러 트랜잭션을 연결한다. 인접 요청에 서로 다른 입력을 사용하면 이전 결과·길이·식별자의 잘못된 재사용을 관측하기 쉽다. 허용된 분할 전송, descriptor offset, 버퍼 재사용과 소유권 인계를 바꾸면서 요청과 결과의 대응을 유지하는지 검사한다.
 
-### 해석의 경계
+### 값과 상태 전이를 각각 판정한다
 
-BITOXIN은 자기 버퍼를 검사하므로 Compuon의 보호 객체를 직접 검증하지 않는다. 제품이 의도한 무결성 거부, 프로토콜 거부, 환경 손상, 경쟁 조건과 통신 오류를 구분해야 한다. 오류가 없더라도 anti-cheat 강도, 비밀성 또는 암호학적 안전성을 입증하지 않는다.
-
-Linux QA 호스트에서는 커널 모듈을 별도 비교군으로 사용할 수 있다. Windows나 게임 runtime에 이 모듈을 그대로 적용할 수는 없다. 현재 portable 경로의 성공을 다른 OS·아키텍처의 커널 상태 보존 검증으로 확대하지 않는다.
-
----page---
-
-# 10. HESM에 적용하는 방법
-
-HESM 작업 사본은 A35 Linux가 gateway를 맡고 M33이 세션·암호 연산을 수행하는 STM32MP25 계열 구성을 설명한다. TF-M·OP-TEE 및 공유 DDR 경계가 있으며, 현재 kms-tee 브랜치는 별도의 키 보관·복호 경로도 포함한다. 이 문서가 읽은 작업 트리는 수정 상태였으므로 HEAD만으로 참조 내용을 재현할 수 없다. [12]
-
-초기 적용점은 A35 Linux다. 정확한 보드 BSP로 모듈을 빌드해 별도 worker로 실행하고, 기존 host → USB CDC-NCM → gateway → RPMsg/shared DDR → M33/TF-M 트랜잭션의 정답 검사와 병행한다. REE → OP-TEE TA → M33 키 보관 경로는 별도 시험으로 식별한다.
-
-| 시험 단계 | 관측해야 할 것 |
+| 검사 대상 | 독립된 판정 기준 |
 |---|---|
-| 기존 host 검증 | native/sanitizer/portability gate와 산출물 hash |
-| 보드 baseline | 공개 fixture의 복호 결과, timeout·복구 및 요청 식별 |
-| 보드 + BITOXIN | 같은 결과 검사와 probe 상태, CPU·메모리·latency 영향 |
-| 지원되는 PM 전이 | 실제 PM trace/counter와 전후 검사 상태 |
-| 지원되는 USB·RPMsg 복구 | 링크·서비스 복구, 중복·유실 요청 및 결과 정합성 |
+| 세션·요청 | 상태 모델에 따른 허용 전이, 거부 상태와 거부 후 영향 |
+| 공유 버퍼 | 범위·소유권 계약 및 실제 전송된 입력의 정합성 |
+| 암호 연산 | 공개 fixture의 정답; 결정적 계수·byte는 정확히 비교 |
+| CKKS 복호 값 | 해당 profile의 scale·허용 오차로 근사 결과 비교 |
+| 키 수명 | 시험 키의 세대와 문서화된 LOAD/REVOKE 결과 |
 
-처음에는 64 KiB 또는 1 MiB와 worker 1개로 자원 영향을 측정한다. 더 큰 버퍼와 pause 설정은 별도 조건으로 비교한다. HESM 문서가 미검증으로 표시한 USB suspend/reset/hot-unplug 등을 이미 지원되는 동작으로 가정하지 않는다.
+지연·retry·abort·reconnect는 계약별로 성공 또는 거부를 명시한다. 모든 중단이 투명하게 복구되어야 한다고 가정하지 않는다. 미검증 USB/PM 전이나 전원 상실 후 키 수명은 별도 탐색 대상이다. 왕복 변환만으로 공유된 구현 오류를 놓치지 않도록 알려진 정답이나 독립 구현을 유지한다.
 
-### 소유권과 보안 경계를 유지한다
-
-BITOXIN의 private vmalloc 버퍼는 HESM shared window나 TF-M secure RAM이 아니다. 해당 경계의 손상을 시험하려면 그 메모리 소유자의 트랜잭션·정답 검사와 계측을 사용해야 한다. 프로브가 임의로 secure 영역을 읽거나 제품 버퍼를 덮어쓰는 방식은 제안하지 않는다.
-
-현재 HESM의 시험 키·provisioning 규칙을 따른다. 공개 fixture와 시험 키를 사용하고, 이 안정성 시험을 인증·키 보호·side-channel 검증으로 해석하지 않는다. 실제 HESM 보드와 PM/DDR 동작의 적용 효과는 이번 작업에서 측정하지 않았다.
+첫 적용점은 host session fixture의 다중 트랜잭션 검사이며, 같은 판정 기준을 실제 통신·암호 profile로 확장한다. 시험용 손상은 소유권이 정해진 test buffer나 시험 인터페이스에 주입한다. 별도 A35 메모리 프로브를 배치하는 제안이 아니다. 실제 제품 통합과 보드 효과는 아직 측정하지 않았다.
 
 ---page---
 
-# 11. 실행·관측·재현성
+# 11. 시스템 프로브 참조 구현의 실행
 
 커널 모듈은 bitoxin_qa.ko이며, 기존 burst/hook/mixed 제어 대신 load-time 설정을 사용한다. 정적 구성을 택해 실행 중 메모리 크기·worker 수 변경이 검사 상태를 흔드는 문제를 줄였다. 설정 변경은 unload/reload로 수행한다. 상세 명령과 exit code는 README에 있다. [10]
 
@@ -321,7 +329,7 @@ debugfs 상태는 worker별로 일관된 snapshot이며 동시에 찍힌 전역 
 
 ### 다음 검증 단계
 
-현재 우선순위는 대상 BSP에서 load/unload와 기존 QA 간섭을 확인하고, 실제 PM 조건 도달을 측정한 뒤, 대조군과 재현율을 비교하는 것이다. 발견된 손상에 대해 제품 검사·보드 계측·수정 전후 재시험을 연결한다. 더 복잡한 연쇄나 더 많은 부하를 추가하는 판단도 이 증거에 근거해야 한다.
+시스템 프로브 자체의 후속 검증은 대상 BSP의 실행·PM 도달·대조 실험이다. 제품에 개념을 차용하는 후속 작업은 9~10절의 연산열과 기준 모델을 해당 테스트에 구현하는 것이다. 두 작업은 별개이며, 이 모듈의 검증 결과가 제품 적용의 증거가 되지는 않는다.
 
 ---page---
 
@@ -356,9 +364,9 @@ https://docs.kernel.org/kbuild/modules.html
 
 [10] BITOXIN 2 소스, 테스트 및 docs/verification.md. 원본 기준 commit: 53203f75ab0362924f21299af56ceacc0d1d86b1. 재작성된 파일은 함께 제공한 source-manifest.sha256으로 식별한다.
 
-[11] 로컬 Compuon Core README 및 테스트 안내. Core HEAD: 517f1a1b1206212bb15355e0731bf2d9fb81de17. 요청 경로 compuon-dev 대신 인접 compuon을 잠정 참조했다.
+[11] 로컬 Compuon Core README, tests/test_compuon_deferred.cpp, test_identity_arithmetic.cpp, test_api_lifecycle.cpp, test_sync_protocol.cpp. Core HEAD: 517f1a1b1206212bb15355e0731bf2d9fb81de17. 요청 경로 compuon-dev 대신 인접 compuon을 잠정 참조했다.
 
-[12] 로컬 HESM README, docs/development/build_and_test.md, verification.md. HEAD: d0671cc637d57673516b8141bf7eb82340565073, 수정된 작업 트리에서 열람. 제품 적용 시험은 미실행.
+[12] 로컬 HESM README, tests/session_test.c, shared_window_test.c, ckks_v2l1w_service_test.c, ckks_v2l1w_kernel_test.c, ckks_v2l1w_tools_test.py, include/hesm/tfm_ops.h. HEAD: d0671cc637d57673516b8141bf7eb82340565073, 수정된 작업 트리에서 열람. 제품 적용 시험은 미실행.
 
 [13] Kuhn, Higdon, Lawrence, Kacker, Lei. Combinatorial Methods for Event Sequence Testing, ICST 2012. DOI: 10.1109/ICST.2012.147. 외부 QA 사건 순서 설계를 확장할 때의 참고자료이며, 버퍼 LFSR 순회와는 다른 포괄성 개념이다.
 https://www.nist.gov/publications/combinatorial-methods-event-sequence-testing?pub_id=906770
