@@ -9,6 +9,15 @@ The author's 2018 use involved independent Linux kernel threads, including a
 reported near-100% reproduction of a vendor BSP paging/PM issue. That is a
 historical recollection, not a measured result of this rewrite.
 
+## Reusing the concept
+
+For Compuon and HESM, the intended application is to carry **product state** through
+linked operations and lifecycle boundaries, with an independent expected result
+and checkpoints that expose corruption. It does not require deploying this Linux
+module or running this probe beside the product. The implementations below are
+reference examples for system-state integrity; see [product QA design](docs/qa-applications.md)
+for concrete adaptations. Those product integrations have not been implemented.
+
 ## What changed
 
 - Persistent per-worker buffers; LFSR bit traversal includes bit zero explicitly.
