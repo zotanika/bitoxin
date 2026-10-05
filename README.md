@@ -9,14 +9,15 @@ The author's 2018 use involved independent Linux kernel threads, including a
 reported near-100% reproduction of a vendor BSP paging/PM issue. That is a
 historical recollection, not a measured result of this rewrite.
 
-## Reusing the concept
+## Design principle
 
-For Compuon and HESM, the intended application is to carry **product state** through
-linked operations and lifecycle boundaries, with an independent expected result
-and checkpoints that expose corruption. It does not require deploying this Linux
-module or running this probe beside the product. The implementations below are
-reference examples for system-state integrity; see [product QA design](docs/qa-applications.md)
-for concrete adaptations. Those product integrations have not been implemented.
+BITOXIN keeps actual state alive through dependent operations and permitted
+interruptions, and checks it against independently specified expectations.
+The shared engine provides user-space and Linux-worker execution contexts.
+Background workloads may exercise fault-triggering conditions; the probe checks
+whether resulting state corruption becomes observable. These are distinct effects.
+See [testing method](docs/testing-method.md) for BITOXIN's experiment design,
+observation policy, and evidence requirements.
 
 ## What changed
 
@@ -121,14 +122,14 @@ unexpected reboots and hangs also require an external observer.
 
 The [English paper](output/pdf/bitoxin-paper-en.pdf) develops the stateful-testing concept with
 related work and 61,440 controlled bit-injection trials, separating measured
-observability from unmeasured product effectiveness. [Editable source and reproduction
+observability from unmeasured field defect discovery. [Editable source and reproduction
 instructions](paper/README.md) include LaTeX/BibTeX and per-trial data. The paper targets arXiv; [upload preparation](paper/ARXIV.md) describes its source
 package and reproducibility supplement. Publication author details are pending.
 
-## Validation and application
+## Design and validation
 
 - [Verification record](docs/verification.md): actual checks and remaining limits.
-- [QA applications](docs/qa-applications.md): Compuon and HESM campaign design.
+- [Testing method](docs/testing-method.md): state retention, observation and campaign design.
 - [White paper source](docs/whitepaper.ko.md) and [PDF](output/pdf/bitoxin-whitepaper-ko.pdf).
 
 Reproduce Linux compile/tests using `tools/Dockerfile.verify` and
