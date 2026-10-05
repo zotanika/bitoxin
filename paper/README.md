@@ -2,16 +2,16 @@
 
 ## Manuscript scope
 
-`manuscript.tex` is a complete English methods/tool manuscript in a neutral
+`manuscript.tex` is a complete English methods/tool preprint for arXiv in a standard
 10-point, two-column format. It treats BITOXIN as a QA design concept and the
 kernel/user probe as one reference implementation. Product adoption does not
 require a Linux module. The protected-value and transaction-service examples
 are proposed adaptations, not evaluated case studies.
 
-The author block and PDF metadata are anonymous. This is not a claim that the
-project name or the entire repository is unidentifiable under every venue's
-anonymity rules. No author names, affiliations, funding, conflicts, public archive
-URL, or historical experimental data have been invented.
+Publication author details are awaiting user confirmation. The current anonymous
+block is temporary and must be replaced before upload. No author identities,
+affiliations, funding, conflicts or historical data are inferred. See
+[arXiv preparation](ARXIV.md) for the upload package and form metadata.
 
 The new evidence consists of 61,440 single-bit-injection cases and 120 clean
 controls, each run in native ARM64, portable-C and native ASan/UBSan configurations.
@@ -67,30 +67,32 @@ workflow using the supplied `.tex` and `.bib` files and TikZ/PGFPlots packages.
 Tectonic may download TeX dependencies on an initial build. No network access is
 required by the experiments.
 
-## Submission preparation
+## arXiv preparation
 
-A venue has not been selected. The current evidence is best framed as a bounded
-method/tool contribution with controlled observability experiments. The paper
-explicitly avoids claiming a new foundational testing theory or demonstrated
-improvement in real product defect discovery. A full empirical effectiveness claim
-would require a product-level comparative study and meaningful external baselines.
+The target is an arXiv preprint. Keep the current compact scholarly format; no
+conference template or anonymous review mode is needed. The paper preserves its
+controlled-experiment scope and distinguishes proposed applications from results.
+After confirming publication author details, run:
 
-Before an actual submission, select the venue and article category, use its exact
-template/page limit, and supply author/affiliation and required declarations.
-Check that venue's anonymity and AI-assistance disclosure rules. This manuscript,
-experiment harness and editorial work were prepared with AI assistance; the human
-authors must review and take responsibility for the work and use the venue's
-required disclosure wording. No disclosure policy has been assumed or fabricated.
+```sh
+tools/build_paper.sh
+python3 tools/package_arxiv.py
+```
 
-For artifact review, create a suitable archive and persistent identifier if the
-venue requests one. The manuscript currently says only that a local artifact
-accompanies it. Existing source attribution and licenses must be retained; the
-repository and its old logs contain identities and local paths, so do not upload
-it as an anonymous artifact without a separate, policy-appropriate preparation.
-The manuscript source ZIP contains only the article's editable inputs.
-`output/paper/artifact-manifest.sha256` binds the source, data, earlier verification
-logs and final article outputs; `output/pdf/source-manifest.sha256` is refreshed
-for the current repository sources as part of the paper build.
+The package contains the article inputs, generated bibliography and a self-contained
+`anc/` reproducibility supplement. See [ARXIV.md](ARXIV.md). The final arXiv-rendered
+PDF must be checked at upload; the local build is not an arXiv processing result.
+No submission or distribution-license selection is performed by these commands.
+
+The article, experiment scripts and editorial work were prepared with AI assistance.
+The human author reviews and takes responsibility for the publication. Existing
+source notices are preserved. The full repository and local logs need not be
+uploaded: the dedicated package contains only the intended source/data subset and
+sanitized evidence records.
+
+`output/paper/artifact-manifest.sha256` identifies repository sources, evidence and
+article outputs. The arXiv supplement has its own `anc/SHA256SUMS` for the packaged
+experiment files.
 
 ## Reference verification
 

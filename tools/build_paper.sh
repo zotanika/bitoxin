@@ -5,7 +5,7 @@ cd "$paper_root"
 "${PYTHON:-python3}" tools/prepare_paper.py
 mkdir -p build/paper output/pdf output/paper
 cd paper
-tectonic "$@" --keep-logs --outdir ../build/paper manuscript.tex
+tectonic "$@" --keep-logs --keep-intermediates --outdir ../build/paper manuscript.tex
 cd "$paper_root"
 cp build/paper/manuscript.pdf output/pdf/bitoxin-paper-en.pdf
 "${PYTHON:-python3}" - <<'PY'
@@ -20,7 +20,7 @@ inputs = ['manuscript.tex','references.bib','figures/detection.tex','data/walk-r
 with ZipFile(root/'output/paper/bitoxin-paper-en-source.zip', 'w', ZIP_DEFLATED) as z:
     for name in inputs:
         z.write(root/'paper'/name, name)
-    z.writestr('BUILD.txt', 'Compile manuscript.tex with Tectonic, or LaTeX + BibTeX + LaTeX twice.\nRequires standard article, geometry, AMS packages, booktabs, TikZ/PGFPlots, xurl, hyperref.\nThe supplied tables and plot contain the recorded experiment results.\nThis is a neutral-format anonymous manuscript; apply the target venue template before submission.\n')
+    z.writestr('BUILD.txt', 'Compile manuscript.tex with Tectonic, or LaTeX + BibTeX + LaTeX twice.\nRequires standard article, geometry, AMS packages, booktabs, TikZ/PGFPlots, xurl, hyperref.\nThe supplied tables and plot contain the recorded experiment results.\nThis is an arXiv-oriented preprint. Use the dedicated arXiv package for submission; confirm publication author details first.\n')
 print('output/pdf/bitoxin-paper-en.pdf')
 print('output/paper/bitoxin-paper-en-source.zip')
 PY

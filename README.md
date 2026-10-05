@@ -122,8 +122,8 @@ unexpected reboots and hangs also require an external observer.
 The [English paper](output/pdf/bitoxin-paper-en.pdf) develops the QA concept with
 related work and 61,440 controlled bit-injection trials, separating measured
 observability from unmeasured product effectiveness. [Editable source and reproduction
-instructions](paper/README.md) include LaTeX/BibTeX and per-trial data. The paper
-uses a neutral anonymous format; a submission venue has not yet been selected.
+instructions](paper/README.md) include LaTeX/BibTeX and per-trial data. The paper targets arXiv; [upload preparation](paper/ARXIV.md) describes its source
+package and reproducibility supplement. Publication author details are pending.
 
 ## Validation and application
 

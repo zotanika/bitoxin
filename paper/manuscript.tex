@@ -15,7 +15,7 @@
 \newcommand{\code}[1]{\texttt{#1}}
 \title{BITOXIN: Preserving State Dependencies to Expose\\Integrity Failures in Stateful Quality Assurance}
 \author{Anonymous Author(s)}
-\date{}
+\date{October 5, 2026}
 \hypersetup{pdftitle={BITOXIN: Preserving State Dependencies to Expose Integrity Failures in Stateful Quality Assurance},pdfauthor={Anonymous Author(s)},pdfsubject={QA design method and controlled observability experiments}}
 \begin{document}
 \maketitle
@@ -245,7 +245,7 @@ The experiments demonstrate specified observability properties and checker behav
 BITOXIN expresses a practical QA requirement: preserve the state whose integrity matters, carry it through meaningful dependencies and allowed interruptions, and observe it against an independent expectation. The reference probe and finite fault experiments show how reinitialization, omitted endpoint checks, and an advancing verifier change what a test can reveal. They also expose the limits of interpreting a completed check as continuing integrity. The concept can be applied within product test frameworks without adopting the original kernel execution model. Its effect on real defect discovery remains a question for controlled product and hardware campaigns.
 
 \section*{Artifact Availability}
-The accompanying local artifact contains the reference engine, experiment harness, declared protocol, compressed per-trial data, build summaries, and a file-hash manifest. The manuscript source includes generated tables and plots derived from the recorded data. No public archive or persistent artifact identifier is claimed. Reproduction instructions and the separation between current evidence and proposed integrations are provided in the artifact documentation.
+The ancillary supplement contains the measured core, controlled-injection harness, declared protocol, compressed per-trial data, build summaries, and file hashes. The new observability experiments can be reproduced independently with a C11 compiler and Python 3, without a kernel module. Earlier host and virtual-kernel verification records are supplied separately as evidence; those wrapper checks require the full repository. The manuscript source includes the tables and plot generated from the recorded data. The supplement distinguishes these measured checks from the proposed product applications.
 
 \bibliographystyle{unsrt}
 {\raggedright\bibliography{references}}
