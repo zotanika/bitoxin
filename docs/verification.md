@@ -64,3 +64,21 @@ available at build time; preserve image IDs/package versions for exact repeats.
 `tools/Dockerfile.guest` and `tools/verify-guest.sh` reproduce the disposable
 virtual-kernel lifecycle/freezer checks. Neither command loads a module into the
 host kernel or runs a PM operation on the physical machine.
+
+## English manuscript observability campaign (2026-10-05)
+
+The production engine remains unchanged. `experiments/PROTOCOL.md` specifies the
+new fault model, boundaries, controls and analytical expectations. The executable
+harness enumerated 61,440 injected trials and 120 clean controls per configuration.
+Native ARM64, forced portable C and native ASan/UBSan produced byte-identical raw
+CSV data (SHA-256 `de12c6ba7a3981253e949af7bc1d451e10f2afbbe26787ca3a075af8ecd35fc0`).
+The existing `make test` suite also passed after adding the experiment tools.
+
+Retained walk plus scan detected all 15,360 assigned walk-boundary faults; walk-only
+detected 7,680/15,360; reinitialization/replay detected 0/15,360. The additional
+15,360 scan-boundary faults include errors behind the verification cursor that
+miss the current pass but are detected by the following retained pass. All 120
+clean controls completed without a mismatch. These are enumerated software cases,
+not estimates of physical fault coverage or independent statistical samples.
+Data, build provenance, generated tables and paper reproduction instructions are
+in `paper/`. No new product or hardware campaign was performed.

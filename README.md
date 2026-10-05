@@ -117,6 +117,14 @@ index (byte start during verification), expected and observed values. A panic ca
 still lose logs without serial/pstore/watchdog capture. Crashes of the checker,
 unexpected reboots and hangs also require an external observer.
 
+## English research manuscript
+
+The [English paper](output/pdf/bitoxin-paper-en.pdf) develops the QA concept with
+related work and 61,440 controlled bit-injection trials, separating measured
+observability from unmeasured product effectiveness. [Editable source and reproduction
+instructions](paper/README.md) include LaTeX/BibTeX and per-trial data. The paper
+uses a neutral anonymous format; a submission venue has not yet been selected.
+
 ## Validation and application
 
 - [Verification record](docs/verification.md): actual checks and remaining limits.

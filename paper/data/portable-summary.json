@@ -1,0 +1,204 @@
+{
+  "variant": "portable",
+  "injected_trials": 61440,
+  "clean_controls": 120,
+  "raw_sha256": "de12c6ba7a3981253e949af7bc1d451e10f2afbbe26787ca3a075af8ecd35fc0",
+  "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)",
+  "command": [
+    "cc",
+    "-std=c11",
+    "-Wall",
+    "-Wextra",
+    "-Wpedantic",
+    "-Werror",
+    "-O2",
+    "-DBX_PORTABLE",
+    "-I.",
+    "experiments/observability.c",
+    "bitoxin_core.c",
+    "-o",
+    "build/observability/portable"
+  ],
+  "groups": [
+    {
+      "experiment": "scan_boundary",
+      "policy": "retain_scan",
+      "boundary": 0,
+      "trials": 3072,
+      "current_detected": 3072,
+      "following_detected": 3072,
+      "max_detection_attempts": 64
+    },
+    {
+      "experiment": "scan_boundary",
+      "policy": "retain_scan",
+      "boundary": 16,
+      "trials": 3072,
+      "current_detected": 2304,
+      "following_detected": 3072,
+      "max_detection_attempts": 560
+    },
+    {
+      "experiment": "scan_boundary",
+      "policy": "retain_scan",
+      "boundary": 32,
+      "trials": 3072,
+      "current_detected": 1536,
+      "following_detected": 3072,
+      "max_detection_attempts": 544
+    },
+    {
+      "experiment": "scan_boundary",
+      "policy": "retain_scan",
+      "boundary": 48,
+      "trials": 3072,
+      "current_detected": 768,
+      "following_detected": 3072,
+      "max_detection_attempts": 528
+    },
+    {
+      "experiment": "scan_boundary",
+      "policy": "retain_scan",
+      "boundary": 63,
+      "trials": 3072,
+      "current_detected": 48,
+      "following_detected": 3072,
+      "max_detection_attempts": 513
+    },
+    {
+      "experiment": "walk_boundary",
+      "policy": "reset_replay",
+      "boundary": 0,
+      "trials": 3072,
+      "current_detected": 0,
+      "following_detected": 0,
+      "max_detection_attempts": 0
+    },
+    {
+      "experiment": "walk_boundary",
+      "policy": "reset_replay",
+      "boundary": 128,
+      "trials": 3072,
+      "current_detected": 0,
+      "following_detected": 0,
+      "max_detection_attempts": 0
+    },
+    {
+      "experiment": "walk_boundary",
+      "policy": "reset_replay",
+      "boundary": 256,
+      "trials": 3072,
+      "current_detected": 0,
+      "following_detected": 0,
+      "max_detection_attempts": 0
+    },
+    {
+      "experiment": "walk_boundary",
+      "policy": "reset_replay",
+      "boundary": 384,
+      "trials": 3072,
+      "current_detected": 0,
+      "following_detected": 0,
+      "max_detection_attempts": 0
+    },
+    {
+      "experiment": "walk_boundary",
+      "policy": "reset_replay",
+      "boundary": 512,
+      "trials": 3072,
+      "current_detected": 0,
+      "following_detected": 0,
+      "max_detection_attempts": 0
+    },
+    {
+      "experiment": "walk_boundary",
+      "policy": "retain_scan",
+      "boundary": 0,
+      "trials": 3072,
+      "current_detected": 3072,
+      "following_detected": 3072,
+      "max_detection_attempts": 512
+    },
+    {
+      "experiment": "walk_boundary",
+      "policy": "retain_scan",
+      "boundary": 128,
+      "trials": 3072,
+      "current_detected": 3072,
+      "following_detected": 3072,
+      "max_detection_attempts": 448
+    },
+    {
+      "experiment": "walk_boundary",
+      "policy": "retain_scan",
+      "boundary": 256,
+      "trials": 3072,
+      "current_detected": 3072,
+      "following_detected": 3072,
+      "max_detection_attempts": 320
+    },
+    {
+      "experiment": "walk_boundary",
+      "policy": "retain_scan",
+      "boundary": 384,
+      "trials": 3072,
+      "current_detected": 3072,
+      "following_detected": 3072,
+      "max_detection_attempts": 192
+    },
+    {
+      "experiment": "walk_boundary",
+      "policy": "retain_scan",
+      "boundary": 512,
+      "trials": 3072,
+      "current_detected": 3072,
+      "following_detected": 3072,
+      "max_detection_attempts": 64
+    },
+    {
+      "experiment": "walk_boundary",
+      "policy": "walk_only",
+      "boundary": 0,
+      "trials": 3072,
+      "current_detected": 3072,
+      "following_detected": 3072,
+      "max_detection_attempts": 512
+    },
+    {
+      "experiment": "walk_boundary",
+      "policy": "walk_only",
+      "boundary": 128,
+      "trials": 3072,
+      "current_detected": 2304,
+      "following_detected": 2304,
+      "max_detection_attempts": 384
+    },
+    {
+      "experiment": "walk_boundary",
+      "policy": "walk_only",
+      "boundary": 256,
+      "trials": 3072,
+      "current_detected": 1536,
+      "following_detected": 1536,
+      "max_detection_attempts": 256
+    },
+    {
+      "experiment": "walk_boundary",
+      "policy": "walk_only",
+      "boundary": 384,
+      "trials": 3072,
+      "current_detected": 768,
+      "following_detected": 768,
+      "max_detection_attempts": 128
+    },
+    {
+      "experiment": "walk_boundary",
+      "policy": "walk_only",
+      "boundary": 512,
+      "trials": 3072,
+      "current_detected": 0,
+      "following_detected": 0,
+      "max_detection_attempts": 0
+    }
+  ]
+}
