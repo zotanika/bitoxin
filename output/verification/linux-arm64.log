@@ -1,0 +1,84 @@
+mkdir -p build
+cc -O2 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -I. tests/test_core.c bitoxin_core.c -o build/test-core
+cc -O2 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -DBX_PORTABLE -I. tests/test_core.c bitoxin_core.c -o build/test-portable
+cc -O2 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -I. tests/test_lfsr.c bitoxin_core.c -o build/test-lfsr
+cc -O2 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -I. tests/test_lane_fault.c -o build/test-lane-fault
+cc -O2 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -I. tools/bitoxin-run.c bitoxin_core.c -pthread -o build/bitoxin-run
+build/test-core
+PASS full cycle, zero bit, reverse direction and closure
+PASS chunked continuation equals uninterrupted execution
+PASS early corruption and latched failure
+PASS late corruption in verification
+PASS opposite-polarity corruption
+PASS corrupted cursor and non-closing LFSR
+PASS invalid sizes, seeds and pointers rejected
+ALL CORE TESTS PASSED
+build/test-portable
+PASS full cycle, zero bit, reverse direction and closure
+PASS chunked continuation equals uninterrupted execution
+PASS early corruption and latched failure
+PASS late corruption in verification
+PASS opposite-polarity corruption
+PASS corrupted cursor and non-closing LFSR
+PASS invalid sizes, seeds and pointers rejected
+ALL CORE TESTS PASSED
+build/test-lfsr
+PASS all 22 LFSR orders and 10128 register-lane inputs
+build/test-lane-fault
+PASS simulated register error is latched before store
+BITOXIN_RUNNER=/tmp/bitoxin-verify/build/bitoxin-run python3 tests/test_runner.py
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.211s
+
+OK
+make BUILD=build/sanitize CFLAGS='-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' test
+make[1]: Entering directory '/tmp/bitoxin-verify'
+mkdir -p build/sanitize
+cc -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -std=c11 -Wall -Wextra -Wpedantic -Werror -I. tests/test_core.c bitoxin_core.c -o build/sanitize/test-core
+cc -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -std=c11 -Wall -Wextra -Wpedantic -Werror -DBX_PORTABLE -I. tests/test_core.c bitoxin_core.c -o build/sanitize/test-portable
+cc -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -std=c11 -Wall -Wextra -Wpedantic -Werror -I. tests/test_lfsr.c bitoxin_core.c -o build/sanitize/test-lfsr
+cc -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -std=c11 -Wall -Wextra -Wpedantic -Werror -I. tests/test_lane_fault.c -o build/sanitize/test-lane-fault
+cc -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -std=c11 -Wall -Wextra -Wpedantic -Werror -I. tools/bitoxin-run.c bitoxin_core.c -pthread -o build/sanitize/bitoxin-run
+build/sanitize/test-core
+PASS full cycle, zero bit, reverse direction and closure
+PASS chunked continuation equals uninterrupted execution
+PASS early corruption and latched failure
+PASS late corruption in verification
+PASS opposite-polarity corruption
+PASS corrupted cursor and non-closing LFSR
+PASS invalid sizes, seeds and pointers rejected
+ALL CORE TESTS PASSED
+build/sanitize/test-portable
+PASS full cycle, zero bit, reverse direction and closure
+PASS chunked continuation equals uninterrupted execution
+PASS early corruption and latched failure
+PASS late corruption in verification
+PASS opposite-polarity corruption
+PASS corrupted cursor and non-closing LFSR
+PASS invalid sizes, seeds and pointers rejected
+ALL CORE TESTS PASSED
+build/sanitize/test-lfsr
+PASS all 22 LFSR orders and 10128 register-lane inputs
+build/sanitize/test-lane-fault
+PASS simulated register error is latched before store
+BITOXIN_RUNNER=/tmp/bitoxin-verify/build/sanitize/bitoxin-run python3 tests/test_runner.py
+....
+----------------------------------------------------------------------
+Ran 4 tests in 7.688s
+
+OK
+make[1]: Leaving directory '/tmp/bitoxin-verify'
+make -C /usr/src/linux-headers-6.1.0-53-arm64 M=/tmp/bitoxin-verify modules
+make[1]: Entering directory '/usr/src/linux-headers-6.1.0-53-arm64'
+  CC [M]  /tmp/bitoxin-verify/bitoxin.o
+  CC [M]  /tmp/bitoxin-verify/bitoxin_core.o
+  LD [M]  /tmp/bitoxin-verify/bitoxin_qa.o
+  MODPOST /tmp/bitoxin-verify/Module.symvers
+  CC [M]  /tmp/bitoxin-verify/bitoxin_qa.mod.o
+  LD [M]  /tmp/bitoxin-verify/bitoxin_qa.ko
+  BTF [M] /tmp/bitoxin-verify/bitoxin_qa.ko
+Skipping BTF generation for /tmp/bitoxin-verify/bitoxin_qa.ko due to unavailability of vmlinux
+make[1]: Leaving directory '/usr/src/linux-headers-6.1.0-53-arm64'
+
+BITOXIN_LINUX_BUILD_PASS headers=/usr/src/linux-headers-6.1.0-53-arm64

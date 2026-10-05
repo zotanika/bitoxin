@@ -1,0 +1,4 @@
+Darwin arm64
+Apple clang version 21.0.0 (clang-2100.3.34.2)
+Python 3.14.7
+ReportLab 4.4.9

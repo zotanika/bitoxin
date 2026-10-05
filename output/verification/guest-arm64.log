@@ -1,0 +1,23 @@
+make: Entering directory '/tmp/bitoxin-guest.BxdBNq'
+make -C /usr/src/linux-headers-6.1.0-53-arm64 M=/tmp/bitoxin-guest.BxdBNq modules
+make[1]: Entering directory '/usr/src/linux-headers-6.1.0-53-arm64'
+  CC [M]  /tmp/bitoxin-guest.BxdBNq/bitoxin.o
+  CC [M]  /tmp/bitoxin-guest.BxdBNq/bitoxin_core.o
+  LD [M]  /tmp/bitoxin-guest.BxdBNq/bitoxin_qa.o
+  MODPOST /tmp/bitoxin-guest.BxdBNq/Module.symvers
+  CC [M]  /tmp/bitoxin-guest.BxdBNq/bitoxin_qa.mod.o
+  LD [M]  /tmp/bitoxin-guest.BxdBNq/bitoxin_qa.ko
+  BTF [M] /tmp/bitoxin-guest.BxdBNq/bitoxin_qa.ko
+Skipping BTF generation for /tmp/bitoxin-guest.BxdBNq/bitoxin_qa.ko due to unavailability of vmlinux
+make[1]: Leaving directory '/usr/src/linux-headers-6.1.0-53-arm64'
+make: Leaving directory '/tmp/bitoxin-guest.BxdBNq'
+insmod: can't insert '/bitoxin_qa.ko': Invalid argument
+BITOXIN_GUEST_INVALID_CONFIG_PASS
+{"schema":1,"backend":"aarch64-gpr","failed":false,"mem_kib":2,"requested_passes":2,"chunk":4096,"pause_ms":0,"freezable":true,"pm_prepare":0,"pm_post":0,"workers":[{"id":0,"state":"complete","seed":16383,"passes":2,"operations":36864,"phase":"walk","walked":0,"verified":0,"boottime_ns":671096160,"error":"ok","error_bit":0,"expected":"0000000000000000","observed":"0000000000000000"},{"id":1,"state":"complete","seed":1,"passes":2,"operations":36864,"phase":"walk","walked":0,"verified":0,"boottime_ns":671877120,"error":"ok","error_bit":0,"expected":"0000000000000000","observed":"0000000000000000"}]}
+{"schema":1,"backend":"aarch64-gpr","failed":false,"mem_kib":2,"requested_passes":2,"chunk":4096,"pause_ms":0,"freezable":true,"pm_prepare":1,"pm_post":1,"workers":[{"id":0,"state":"complete","seed":16383,"passes":2,"operations":36864,"phase":"walk","walked":0,"verified":0,"boottime_ns":671096160,"error":"ok","error_bit":0,"expected":"0000000000000000","observed":"0000000000000000"},{"id":1,"state":"complete","seed":1,"passes":2,"operations":36864,"phase":"walk","walked":0,"verified":0,"boottime_ns":671877120,"error":"ok","error_bit":0,"expected":"0000000000000000","observed":"0000000000000000"}]}
+BITOXIN_GUEST_FINITE_AND_PARKED_FREEZER_PASS
+{"schema":1,"backend":"aarch64-gpr","failed":false,"mem_kib":64,"requested_passes":0,"chunk":17,"pause_ms":1,"freezable":true,"pm_prepare":0,"pm_post":0,"workers":[{"id":0,"state":"running","seed":1,"passes":0,"operations":170,"phase":"walk","walked":170,"verified":0,"boottime_ns":5936917120,"error":"ok","error_bit":0,"expected":"0000000000000000","observed":"0000000000000000"},{"id":1,"state":"running","seed":2,"passes":0,"operations":170,"phase":"walk","walked":170,"verified":0,"boottime_ns":5936933744,"error":"ok","error_bit":0,"expected":"0000000000000000","observed":"0000000000000000"}]}
+{"schema":1,"backend":"aarch64-gpr","failed":false,"mem_kib":64,"requested_passes":0,"chunk":17,"pause_ms":1,"freezable":true,"pm_prepare":1,"pm_post":1,"workers":[{"id":0,"state":"running","seed":1,"passes":0,"operations":187,"phase":"walk","walked":187,"verified":0,"boottime_ns":10951118960,"error":"ok","error_bit":0,"expected":"0000000000000000","observed":"0000000000000000"},{"id":1,"state":"running","seed":2,"passes":0,"operations":187,"phase":"walk","walked":187,"verified":0,"boottime_ns":10951130704,"error":"ok","error_bit":0,"expected":"0000000000000000","observed":"0000000000000000"}]}
+BITOXIN_GUEST_ACTIVE_FREEZER_UNLOAD_PASS
+BITOXIN_GUEST_ALL_PASS
+[   11.322012] reboot: Power down

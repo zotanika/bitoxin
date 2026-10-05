@@ -1,0 +1,8 @@
+gcc (Debian 12.2.0-14+deb12u1) 12.2.0
+Python 3.11.2
+QEMU emulator version 7.2.22 (Debian 1:7.2+dfsg-7+deb12u18+b3)
+busybox-static	1:1.35.0-4+deb12u1+b1
+linux-headers-6.1.0-53-arm64	6.1.187-1
+linux-image-6.1.0-53-arm64	6.1.187-1
+sha256:3ee1ac6de097540e16657bc576611c347830d7484be8d597798a2971ae6227c6
+sha256:0a6e86cb222599367acea9750b9c361b8bc5b33bf8274ea84d050b739903cf6f

@@ -1,0 +1,4 @@
+FROM bitoxin-verify:local
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    linux-image-arm64 qemu-system-arm busybox-static cpio kmod \
+    && rm -rf /var/lib/apt/lists/*

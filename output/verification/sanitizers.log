@@ -1,0 +1,29 @@
+/Applications/Xcode.app/Contents/Developer/usr/bin/make BUILD=build/sanitize CFLAGS='-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' test
+build/sanitize/test-core
+PASS full cycle, zero bit, reverse direction and closure
+PASS chunked continuation equals uninterrupted execution
+PASS early corruption and latched failure
+PASS late corruption in verification
+PASS opposite-polarity corruption
+PASS corrupted cursor and non-closing LFSR
+PASS invalid sizes, seeds and pointers rejected
+ALL CORE TESTS PASSED
+build/sanitize/test-portable
+PASS full cycle, zero bit, reverse direction and closure
+PASS chunked continuation equals uninterrupted execution
+PASS early corruption and latched failure
+PASS late corruption in verification
+PASS opposite-polarity corruption
+PASS corrupted cursor and non-closing LFSR
+PASS invalid sizes, seeds and pointers rejected
+ALL CORE TESTS PASSED
+build/sanitize/test-lfsr
+PASS all 22 LFSR orders and 10128 register-lane inputs
+build/sanitize/test-lane-fault
+PASS simulated register error is latched before store
+BITOXIN_RUNNER=/Users/sunchuljung/repo/zotanika/bitoxin/build/sanitize/bitoxin-run python3 tests/test_runner.py
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.352s
+
+OK
