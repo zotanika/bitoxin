@@ -119,7 +119,7 @@ unexpected reboots and hangs also require an external observer.
 
 ## English research manuscript
 
-The [English paper](output/pdf/bitoxin-paper-en.pdf) develops the QA concept with
+The [English paper](output/pdf/bitoxin-paper-en.pdf) develops the stateful-testing concept with
 related work and 61,440 controlled bit-injection trials, separating measured
 observability from unmeasured product effectiveness. [Editable source and reproduction
 instructions](paper/README.md) include LaTeX/BibTeX and per-trial data. The paper targets arXiv; [upload preparation](paper/ARXIV.md) describes its source

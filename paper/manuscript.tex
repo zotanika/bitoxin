@@ -13,25 +13,25 @@
 \setlength{\floatsep}{9pt plus 2pt minus 2pt}
 \newcommand{\bx}{\textsc{Bitoxin}}
 \newcommand{\code}[1]{\texttt{#1}}
-\title{BITOXIN: Preserving State Dependencies to Expose\\Integrity Failures in Stateful Quality Assurance}
+\title{BITOXIN: Preserving State Dependencies to Expose\\Integrity Failures in Stateful Testing}
 \author{Anonymous Author(s)}
 \date{October 5, 2026}
-\hypersetup{pdftitle={BITOXIN: Preserving State Dependencies to Expose Integrity Failures in Stateful Quality Assurance},pdfauthor={Anonymous Author(s)},pdfsubject={QA design method and controlled observability experiments}}
+\hypersetup{pdftitle={BITOXIN: Preserving State Dependencies to Expose Integrity Failures in Stateful Testing},pdfauthor={Anonymous Author(s)},pdfsubject={Test-design method and controlled observability experiments}}
 \begin{document}
 \maketitle
 
 \begin{abstract}
-State corruption may escape quality assurance when tests discard live state before checking it, reuse an unchecked result as their expectation, or observe only values that no longer depend on the corrupted state. This paper presents BITOXIN as a test-design method that combines persistent state, dependent operations, permitted execution interruptions, and independently specified observations. The method draws on established stateful-testing and fault-observability ideas; its reference implementation is a resumable integrity probe, not a prerequisite for product adoption. We specify its detection assumptions and evaluate observation policies through 61,440 enumerated single-bit-injection trials and 120 clean controls. For faults inserted at five bit-walk boundaries, retaining state and performing a final scan detects all 15,360 faults assigned to that policy. Omitting the scan detects 7,680; reconstructing clean state detects none. A further 15,360 trials show that corruption behind an advancing verifier can escape the current pass but is detected in the next retained pass under the stated model. Native ARM64, portable-C, and sanitizer configurations produce identical outcome records. These results validate a narrow observation mechanism rather than establish field defect coverage or improved time to discovery. We also describe how to transfer the method to protected-value libraries and transaction services without deploying a Linux module.
+State corruption may escape detection during testing when tests discard live state before checking it, reuse an unchecked result as their expectation, or observe only values that no longer depend on the corrupted state. This paper presents BITOXIN as a test-design method that combines persistent state, dependent operations, permitted execution interruptions, and independently specified observations. The method draws on established stateful-testing and fault-observability ideas; its reference implementation is a resumable integrity probe, not a prerequisite for product adoption. We specify its detection assumptions and evaluate observation policies through 61,440 enumerated single-bit-injection trials and 120 clean controls. For faults inserted at five bit-walk boundaries, retaining state and performing a final scan detects all 15,360 faults assigned to that policy. Omitting the scan detects 7,680; reconstructing clean state detects none. A further 15,360 trials show that corruption behind an advancing verifier can escape the current pass but is detected in the next retained pass under the stated model. Native ARM64, portable-C, and sanitizer configurations produce identical outcome records. These results validate a narrow observation mechanism rather than establish field defect coverage or improved time to discovery. We also describe how to transfer the method to protected-value libraries and transaction services without deploying a Linux module.
 \end{abstract}
 \par\smallskip
-\noindent\textbf{Keywords:} stateful testing; fault observability; integrity checking; fault injection; quality assurance
+\noindent\textbf{Keywords:} stateful testing; fault observability; integrity checking; fault injection; system testing
 
 \section{Introduction}
 A system can execute a large workload without exposing every incorrect intermediate state to a test oracle. An overwritten value, an early reinitialization, or an unchecked cache may separate a fault from an observable failure. This distinction matters in systems whose behavior spans scheduling, memory ownership, session lifetimes, and device transitions. Production reports on silent data corruption show why computational errors and their eventual application-level manifestations must be considered together~\cite{dixit2022}.
 
-The practical question addressed here is: \emph{how should a QA workload preserve and observe the state whose integrity it intends to test?} Merely increasing work does not answer that question. Nor does a long sequence imply that every intermediate error affects its final result. For example, multiplication by zero can erase an earlier arithmetic error, while rebuilding an object after a transition can destroy evidence of corruption that occurred during the transition.
+The practical question addressed here is: \emph{how should a test workload preserve and observe the state whose integrity it intends to test?} Merely increasing work does not answer that question. Nor does a long sequence imply that every intermediate error affects its final result. For example, multiplication by zero can erase an earlier arithmetic error, while rebuilding an object after a transition can destroy evidence of corruption that occurred during the transition.
 
-\bx\ originated in an embedded QA workflow that ran an independent computation alongside system activity, including sleep/wakeup cycles. Its motivating hypothesis has two parts: background activity may bring a system into conditions that activate a latent defect, while a dependent computation retains and exposes resulting corruption. The computation must remain interruptible so that the activities can interact with its live state. The practical aim was to make a silent error recognizable to an external test executor, historically through a crash; an explicit mismatch report can serve that purpose without a crash. Historical field recollections are not experimental evidence here. We reconstruct the method and evaluate its observation mechanism under a finite fault model; increased activation and faster discovery of natural defects remain untested hypotheses.
+\bx\ originated in an embedded-system testing workflow that ran an independent computation alongside system activity, including sleep/wakeup cycles. Its motivating hypothesis has two parts: background activity may bring a system into conditions that activate a latent defect, while a dependent computation retains and exposes resulting corruption. The computation must remain interruptible so that the activities can interact with its live state. The practical aim was to make a silent error recognizable to an external test executor, historically through a crash; an explicit mismatch report can serve that purpose without a crash. Historical field recollections are not experimental evidence here. We reconstruct the method and evaluate its observation mechanism under a finite fault model; increased activation and faster discovery of natural defects remain untested hypotheses.
 
 The reusable concept is independent of execution layer. A protected-value library can carry actual objects through arithmetic and lifecycle operations; a transaction service can retain request, buffer, and response history. Neither application requires running the reference Linux module beside the product. The product's own state and its contract become the test subject.
 
@@ -41,7 +41,7 @@ This paper makes three bounded contributions:
 \item A resumable reference probe with explicit traversal and verification invariants, supported by algorithmic, host, and virtual-kernel checks.
 \item Reproducible, enumerated fault experiments that separate retaining state, checking visited locations, and extending the observation horizon.
 \end{enumerate}
-The contribution is an engineering method and its executable analysis. We do not claim to originate stateful testing, error propagation, or test oracles; establish a new universal coverage metric; or demonstrate superiority to existing QA tools.
+The contribution is an engineering method and its executable analysis. We do not claim to originate stateful testing, error propagation, or test oracles; establish a new universal coverage metric; or demonstrate superiority to existing testing tools.
 
 \section{Background and Positioning}
 \paragraph{Fault observation.}
@@ -59,7 +59,7 @@ CHESS systematically explores thread interleavings and supports reproduction of 
 \paragraph{Stress and computational integrity.}
 Stressful Application Test generates memory and I/O traffic and checks data integrity~\cite{stressapptest}. Dixit et al. discuss in-production and out-of-production strategies for detecting silent corruption at scale~\cite{dixit2022}. These are relevant operational contexts, but our experiments do not compare their detection performance. We isolate a smaller question: what happens to a known injected error when a test retains, checks, or reconstructs the state containing it?
 
-\section{A Design Contract for Stateful QA}
+\section{A Design Contract for Stateful Testing}
 \subsection{State, events, and observations}
 Let $x_i$ be the actual product state before step $i$, $u_i$ its intended operation input, and $e_i$ an event permitted by the product contract. A useful abstraction is
 \begin{equation}
@@ -114,7 +114,7 @@ For a specified fault and a sound observation predicate, define a true detection
 This identity, when the conditionals are defined, requires no independence assumption. Data dependency does not make successive failures statistically independent. Nor does a weighted average of state-dependent success probabilities bound every individual state from below. We use this decomposition to delimit claims, not to estimate an unknown system's reliability.
 
 \paragraph{Coupling activation and observation.}
-The method has separate activation and observation questions, although both activities share the system under test. A background scenario varies relevant load, lifecycle events, and configuration; the dependent computation carries live state across those events and checks for damage. The scenario need not directly control a power sequence. However, a workload may suppress an idle or gating condition that triggers a defect, so increased activity is not automatically useful coverage. Software injection evaluates whether a specified corruption remains observable; it does not show that either activity activates natural faults more often. A complete QA campaign therefore needs evidence of reached conditions as well as recorded failures. A supervisor should distinguish a reported mismatch from a hang or restart and retain run identity and progress across recovery where possible. Such an interruption alone does not identify corruption as its cause.
+The method has separate activation and observation questions, although both activities share the system under test. A background scenario varies relevant load, lifecycle events, and configuration; the dependent computation carries live state across those events and checks for damage. The scenario need not directly control a power sequence. However, a workload may suppress an idle or gating condition that triggers a defect, so increased activity is not automatically useful coverage. Software injection evaluates whether a specified corruption remains observable; it does not show that either activity activates natural faults more often. A complete system-testing campaign therefore needs evidence of reached conditions as well as recorded failures. A supervisor should distinguish a reported mismatch from a hang or restart and retain run identity and progress across recovery where possible. Such an interruption alone does not identify corruption as its cause.
 
 \section{Reference Integrity Probe}
 \subsection{Traversal and invariants}
@@ -137,8 +137,8 @@ Verification exposed a legacy degree-14 mask, \code{0x201d}, with period 126 und
 A separate legacy hook loop performed one excess visit. The historically used independent-worker path did not have that loop boundary. The reconstructed engine uses explicit visit counts and closure checks. These examples motivate testing the checker before attributing its reports to the environment.
 
 \section{Evaluation Design}
-\subsection{Questions and fault model}
-We evaluate three questions. \textbf{RQ1:} How do state retention and a final scan affect observation of a bit flip introduced during traversal? \textbf{RQ2:} What remains unobserved when corruption occurs behind a moving verification cursor? \textbf{RQ3:} Which implementation and execution properties are supported by current checks?
+\subsection{Objectives and fault model}
+The evaluation examines how state retention and a final scan affect observation of an injected bit flip, and what remains unobserved when corruption occurs behind a moving verification cursor. Separate implementation checks assess traversal correctness, register transformations, and execution behavior.
 
 The new experiments enumerate a finite software fault model. Each trial begins from a correct prefix of the real C engine with $B=64$, $N=512$, one of seeds $\{1,17,255\}$, and one of the two pass directions. Exactly one buffer bit is XOR-flipped at a call boundary. The error persists unless the tested policy overwrites it. The harness, control state, oracle, and later operations are assumed correct. Calls have a budget of one logical probe operation; no concurrent fault is injected inside a load, store, or assembly sequence.
 
@@ -153,7 +153,7 @@ Inject after $k\in\{0,128,256,384,512\}$ completed bit visits and enumerate ever
 \item[Walk only:] Retain the state but stop when the walk ends, before the scan.
 \item[Reset + replay:] Reinitialize the state, reconstruct the clean prefix at the same boundary, and then finish the pass with a scan.
 \end{description}
-The last policy intentionally models loss of evidence through reconstruction; it is not a competitive QA tool. Its reconstruction cost is excluded from post-boundary attempt counts, and no performance comparison is made. Each policy has $5\times512\times3\times2=15{,}360$ injected trials and 30 clean controls.
+The last policy intentionally models loss of evidence through reconstruction; it is not a competitive testing tool. Its reconstruction cost is excluded from post-boundary attempt counts, and no performance comparison is made. Each policy has $5\times512\times3\times2=15{,}360$ injected trials and 30 clean controls.
 
 Under this model, an unvisited corrupted bit fails its selected-bit check. A visited corrupted bit is preserved by subsequent correct updates to other bits and fails the final byte scan. Thus the predicted count per 512-bit group is 512 for Retain + scan, $512-k$ for Walk only, and zero for Reset + replay. This argument assumes a single persistent fault between operations; it does not cover arbitrary concurrent corruption or damage to the checker.
 
@@ -168,7 +168,7 @@ The new campaign ran on macOS ARM64 with Apple Clang 21.0.0, using optimized nat
 Separate preserved verification records cover Linux ARM64 with GCC 12.2.0, a warning-enabled module build against Linux 6.1.0-53 ARM64 headers, and a QEMU 7.2.22 guest with two Cortex-A53 virtual CPUs. The virtual-kernel PM check uses \code{pm\_test=freezer}; it does not execute physical sleep. Experiment scripts, compressed trial data, compiler records, and source hashes accompany the manuscript.
 
 \section{Results}
-\subsection{RQ1: retention and the endpoint scan}
+\subsection{Retention and final scanning}
 Table~\ref{tab:walk} reports detections at each injection boundary, pooled over seeds and directions. Retain + scan detected 15,360 of its 15,360 injected faults. Walk only detected 7,680 of 15,360, and Reset + replay detected zero of 15,360. All 90 clean controls completed without a report. Figure~\ref{fig:results} shows the exact finite-case fractions.
 
 \begin{table}[t]
@@ -180,7 +180,7 @@ Table~\ref{tab:walk} reports detections at each injection boundary, pooled over 
 
 The 50\% aggregate for Walk only is a consequence of the chosen, equally weighted boundaries. It is not an estimated field detection probability. At the midpoint, the policy misses exactly the already visited half of the bits. The final scan provides an observation for those locations; reconstruction removes the error before either mechanism can observe it. These are mechanism checks against deliberately weakened policies, not evidence of superiority to mature memory-test tools.
 
-\subsection{RQ2: a completed pass has a finite horizon}
+\subsection{The observation horizon}
 Table~\ref{tab:scan} shows that current-pass detection declines with the number of already verified bytes. At $q=63$, only 48 of 3,072 cases are detected before that pass completes; the other 3,024 cases involve bytes behind the cursor. All 15,360 scan-boundary faults are detected by the end of the following retained pass. The maximum observed post-injection detection latency across these cases is 560 attempted probe operations. All 30 additional clean controls complete without a report.
 
 \begin{table}[t]
@@ -199,7 +199,7 @@ Across both experiments there are 61,440 injected trials and 120 clean controls 
 \label{fig:results}
 \end{figure}
 
-\subsection{RQ3: implementation checks}
+\subsection{Implementation checks}
 The independent order tests cover all 22 LFSR masks. Register-lane checks compare 10,128 chosen input patterns with their expected identity outputs. Core tests cover full and inverse passes, bit zero, chunked continuation, early and late corruption, malformed cursors, invalid configuration, and latched errors. A test-only lane substitution confirms that an altered output is rejected before the corresponding buffer write. It is a simulated output error, not a physical register fault.
 
 Native, portable, sanitizer, and Linux user-space tests pass in the recorded environments. The virtual-kernel run demonstrates bounded two-worker completion, retained cursors across freezer tests, unloading active workers, and five repeated load/unload cycles. Startup resource-failure injection and the actual panic path remain unexecuted. None of these checks establishes a physical interruption inside a particular assembly instruction, target-board qualification, or real power-sequence coverage.
@@ -237,13 +237,13 @@ The same harness drives the policies, so a harness bug could affect all results.
 The injection buffer has only 64 bytes. It does not exercise realistic cache capacities, paging behavior, DDR traffic, or heterogeneous memory. The LFSR's exhaustive bit-index traversal is not exhaustive coverage of system states or instruction $n$-grams. A cache hit need not access DRAM. The virtual-kernel tests cannot reproduce electrical effects of clock gating, voltage transitions, or memory retention.
 
 \paragraph{Measurement and operational validity.}
-We report logical attempts, not timing or throughput. Checking changes the workload and may alter the very condition being investigated. More activity can prevent low-power entry. An absence of reported corruption is not a reliability certificate, and structured logs can be lost in a crash or power failure. Independent workload and transition observations are needed in real QA campaigns.
+We report logical attempts, not timing or throughput. Checking changes the workload and may alter the very condition being investigated. More activity can prevent low-power entry. An absence of reported corruption is not a reliability certificate, and structured logs can be lost in a crash or power failure. Independent workload and transition observations are needed in real system-testing campaigns.
 
 \paragraph{Scope of the evidence.}
 The experiments demonstrate specified observability properties and checker behavior. They do not show faster discovery of previously unknown product defects, validate the historical embedded-system anecdote, or measure the proposed product adaptations. Establishing those claims requires external comparative experiments.
 
 \section{Conclusion}
-BITOXIN expresses a practical QA requirement: preserve the state whose integrity matters, carry it through meaningful dependencies and allowed interruptions, and observe it against an independent expectation. Its original motivation couples background scenarios that may activate defects with a computation that exposes resulting corruption. The finite fault experiments validate the observation side: reinitialization, omitted endpoint checks, and an advancing verifier change what a test can reveal. They do not validate the activation side or faster defect discovery. The concept can be applied within product test frameworks without adopting the original kernel execution model. Its combined effect remains a question for controlled product and hardware campaigns.
+BITOXIN expresses a practical testing requirement: preserve the state whose integrity matters, carry it through meaningful dependencies and allowed interruptions, and observe it against an independent expectation. Its original motivation couples background scenarios that may activate defects with a computation that exposes resulting corruption. The finite fault experiments validate the observation side: reinitialization, omitted endpoint checks, and an advancing verifier change what a test can reveal. They do not validate the activation side or faster defect discovery. The concept can be applied within product test frameworks without adopting the original kernel execution model. Its combined effect remains a question for controlled product and hardware campaigns.
 
 \section*{Artifact Availability}
 The ancillary supplement contains the measured core, controlled-injection harness, declared protocol, compressed per-trial data, build summaries, and file hashes. The new observability experiments can be reproduced independently with a C11 compiler and Python 3, without a kernel module. Earlier host and virtual-kernel verification records are supplied separately as evidence; those wrapper checks require the full repository. The manuscript source includes the tables and plot generated from the recorded data. The supplement distinguishes these measured checks from the proposed product applications.

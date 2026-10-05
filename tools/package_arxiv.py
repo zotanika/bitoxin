@@ -54,7 +54,7 @@ with zipfile.ZipFile(out/name, 'w', zipfile.ZIP_DEFLATED) as z:
 abstract = re.search(r'\\begin\{abstract\}(.*?)\\end\{abstract\}', source, re.S).group(1).strip()
 assert '\\' not in abstract  # Keep form metadata as plain text.
 metadata = {
-    'title':'BITOXIN: Preserving State Dependencies to Expose Integrity Failures in Stateful Quality Assurance',
+    'title':'BITOXIN: Preserving State Dependencies to Expose Integrity Failures in Stateful Testing',
     'authors_status':'pending confirmation' if pending else 'specified in manuscript',
     'authors_latex':authors_tex,
     'abstract':abstract,

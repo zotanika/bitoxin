@@ -3,7 +3,7 @@
 ## Manuscript scope
 
 `manuscript.tex` is a complete English methods/tool preprint for arXiv in a standard
-10-point, two-column format. It treats BITOXIN as a QA design concept and the
+10-point, two-column format. It treats BITOXIN as a stateful-testing design concept and the
 kernel/user probe as one reference implementation. Product adoption does not
 require a Linux module. The protected-value and transaction-service examples
 are proposed adaptations, not evaluated case studies.
