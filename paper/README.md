@@ -4,9 +4,8 @@
 
 `manuscript.tex` is a complete English methods/tool preprint for arXiv in a standard
 10-point, two-column format. It treats BITOXIN as a stateful-testing design concept and the
-kernel/user probe as one reference implementation. Product adoption does not
-require a Linux module. The protected-value and transaction-service examples
-are proposed adaptations, not evaluated case studies.
+kernel/user probe as its reference implementation. The scope is BITOXIN's method,
+observation behavior, execution interfaces and validation evidence.
 
 The historical motivation couples background scenarios that may activate latent
 defects with an interruptible dependent computation that exposes resulting
@@ -77,7 +76,7 @@ required by the experiments.
 
 The target is an arXiv preprint. Keep the current compact scholarly format; no
 conference template or anonymous review mode is needed. The paper preserves its
-controlled-experiment scope and distinguishes proposed applications from results.
+controlled-experiment scope and distinguishes proposed system campaigns from results.
 After confirming publication author details, run:
 
 ```sh

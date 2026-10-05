@@ -53,13 +53,17 @@ with zipfile.ZipFile(out/name, 'w', zipfile.ZIP_DEFLATED) as z:
         z.writestr(key, data)
 abstract = re.search(r'\\begin\{abstract\}(.*?)\\end\{abstract\}', source, re.S).group(1).strip()
 assert '\\' not in abstract  # Keep form metadata as plain text.
+build_log = (ROOT/'build/paper/manuscript.log').read_text()
+page_match = re.search(r'Output written on .*?\((\d+) pages?[,)]', build_log)
+if not page_match:
+    raise SystemExit('Cannot determine article page count from the build log.')
 metadata = {
     'title':'BITOXIN: Preserving State Dependencies to Expose Integrity Failures in Stateful Testing',
     'authors_status':'pending confirmation' if pending else 'specified in manuscript',
     'authors_latex':authors_tex,
     'abstract':abstract,
     'suggested_primary_category':'cs.SE',
-    'comments':'7 pages, 2 figures, 2 tables; includes reproducibility code and data',
+    'comments':f'{page_match.group(1)} pages, 2 figures, 2 tables; includes reproducibility code and data',
     'journal_reference':'', 'doi':'', 'license':'author selects during submission',
     'top_level_file':'manuscript.tex',
     'local_compiler':'Tectonic 0.16.9; arXiv rendering must be checked separately',

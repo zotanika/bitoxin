@@ -49,8 +49,7 @@ injection switch is present.
 
 ## What is not established
 
-No Compuon test suite or HESM board scenario has been run in this task. No real
-suspend/resume, runtime PM, clock gating, DDR retention, hardware bit flip,
+No real suspend/resume, runtime PM, clock gating, DDR retention, hardware bit flip,
 vendor BSP reproduction or security certification is established. Compilation
 against generic Linux headers is not target-BSP qualification. A test failure
 can originate in the probe, kernel, hardware or environment; attribution needs
@@ -81,4 +80,4 @@ miss the current pass but are detected by the following retained pass. All 120
 clean controls completed without a mismatch. These are enumerated software cases,
 not estimates of physical fault coverage or independent statistical samples.
 Data, build provenance, generated tables and paper reproduction instructions are
-in `paper/`. No new product or hardware campaign was performed.
+in `paper/`. No new physical-hardware campaign was performed.

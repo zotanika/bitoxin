@@ -34,7 +34,8 @@ def rows(files):
     return ''.join(sha256(p.read_bytes()).hexdigest()+'  '+p.as_posix()+'\n' for p in files)
 (root/'output/pdf/source-manifest.sha256').write_text(rows(source_files))
 artifact_files = sorted(set(source_files + list((root/'output/verification').glob('*')) + [
-    root/'output/pdf/bitoxin-paper-en.pdf', root/'output/paper/bitoxin-paper-en-source.zip']))
+    root/'output/pdf/bitoxin-paper-en.pdf', root/'output/pdf/bitoxin-whitepaper-ko.pdf',
+    root/'output/paper/bitoxin-paper-en-source.zip']))
 (root/'output/paper/artifact-manifest.sha256').write_text(rows(artifact_files))
 print('Source/data/artifact SHA-256 manifests refreshed')
 PY

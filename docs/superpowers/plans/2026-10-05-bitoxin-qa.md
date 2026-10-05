@@ -9,8 +9,9 @@ pthread runner. The document describes the implemented contracts and test eviden
 **Spec:** ../specs/2026-10-05-bitoxin-qa.md
 
 ## Global Constraints
-Preserve preemption and state across interruption; no PM manipulation. No edits
-to referenced projects. No claim of unrun board validation. Use Korean white paper.
+Preserve preemption and state across interruption; no PM manipulation. Keep
+documentation focused on BITOXIN. No claim of unrun board validation. Use Korean
+white paper.
 
 ## Review Focus
 Zero-index omission; corruption after a bit's visit; partial pass at suspend/stop;
@@ -28,7 +29,7 @@ worker startup failure/unload and debugfs lifetime; register constraints and
 - [x] Run ARM64 Linux tests; compile real module headers; record runtime limits.
 
 ### Task 3: QA documentation and Korean white paper
-- [x] Write README, target application guidance, verification evidence and references.
+- [x] Write README, probe usage guidance, verification evidence and references.
 - [x] Create editable white paper source and reproducible PDF renderer.
 - [x] Render every page, visually inspect and fix layout; open final PDF.
 
@@ -47,7 +48,7 @@ was fixed with a failing-then-passing regression. No remaining review blockers.
 
 Ruling: preserve existing checkout on a new codex branch; no other repo was
 modified. The explicit implementation request authorizes continuous work.
-Ruling: compuon-dev absent; adjacent compuon is a documented provisional reference.
 Ruling: generic Linux build plus QEMU freezer tests are delivered; physical PM,
 BSP qualification, injected startup failures and panic path remain unrun.
-PDF: 13 pages rendered and visually inspected; no missing source glyphs.
+The original white paper was rendered and visually inspected; current page counts
+and content follow the maintained source and generated PDF.

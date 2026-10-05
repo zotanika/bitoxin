@@ -1,8 +1,8 @@
 # BITOXIN reproducibility supplement
 
 This directory accompanies the preprint's controlled observability experiments.
-The production core is the measured implementation, not a proposed product
-integration. The paper's protected-value and transaction examples remain designs.
+The production core is the measured implementation. The paper distinguishes
+measured observation behavior from proposed system campaigns.
 
 ## Run
 
@@ -24,11 +24,11 @@ is needed. Each run executes 61,440 fault injections and 120 clean controls.
 `paper/data/trials.csv.gz` contains the original 61,560 result rows plus a header;
 `paper/data/*-summary.json` records compiler provenance and outcome hashes.
 `evidence/` contains earlier host/Linux/virtual-kernel logs, not newly rerun
-product experiments. Those additional wrapper tests need the complete BITOXIN
+hardware experiments. Those additional wrapper tests need the complete BITOXIN
 repository and are not reproduced by the three commands above.
 
 The protocol has one persistent buffer-bit flip between operations. It does not
-simulate arbitrary hardware faults or establish product defect discovery rates.
+simulate arbitrary hardware faults or establish natural-defect discovery rates.
 `following_detected` in walk-boundary rows repeats `current_detected`; in
 scan-boundary rows it is cumulative detection by the following pass. `attempts`
 counts post-injection calls, including a failure, and excludes prefix setup.

@@ -7,10 +7,10 @@ and persistent test state. Do not convert this into a PM hook or protect the pro
 with preemption/IRQ disabling. The reported vendor BSP paging/PM reproduction
 is an author recollection without archived measurements in this repository.
 
-Deliver a tested shared probe, a Linux module, a portable user-space runner, QA
-application instructions, and a Korean white paper PDF with editable source.
-Other repositories are read-only references. No board deployment or PM operation
-is performed in this task. `../compuon-dev` is absent; `../compuon` is provisional.
+Deliver a tested shared probe, a Linux module, a portable user-space runner, probe
+usage instructions, and a Korean white paper PDF with editable source.
+Documentation covers BITOXIN itself. No physical board deployment or PM operation
+is performed in this task.
 
 ## Design
 - Independent buffer per worker; power-of-two 64 B..128 MiB, bounded allocation.
@@ -44,10 +44,7 @@ The user's explicit rewrite instruction follows the in-chat design and authorize
 implementation. Work in the clean current checkout on codex/bitoxin-qa-rewrite;
 no unnecessary worktree or repeated design approval. Keep changes reviewable.
 
-## Clarification: product applications (2026-10-05)
-The user clarified that Compuon/HESM should borrow the concept, not deploy a Linux
-module. The application guide and white paper now describe dependent product-state
-sequences, independent models and checkpoints at contract-valid lifecycle boundaries.
-The existing system probe remains a reference realization; product integration is
-proposed, not implemented or validated by the probe's tests. Other repositories
-remain read-only.
+## Documentation scope
+The repository documents BITOXIN's state-retention method, reference probe,
+execution interfaces and verification evidence. External project integration
+proposals are outside this documentation scope.

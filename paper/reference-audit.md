@@ -1,6 +1,6 @@
 # Reference audit (2026-10-05)
 
-This local editorial record is not part of the anonymous manuscript source ZIP.
+This local editorial record is not part of the manuscript source ZIP.
 No references are inferred from titles alone; summaries are limited to the
 accessible primary-source descriptions/materials. Some direct PDF retrievals
 failed; their successfully retrieved author/publisher records were used instead.
@@ -18,7 +18,3 @@ failed; their successfully retrieved author/publisher records were used instead.
 | gcc | https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html | Compiler input/output/clobber contract. |
 | linuxfreezer | https://docs.kernel.org/power/freezing-of-tasks.html | Freezable tasks and retained execution; no hardware sleep assertion from notifications. |
 | alfke1996 | https://docs.amd.com/v/u/en-US/xapp052 | XAPP052 title/date and LFSR background. The engine's masks are independently tested rather than attributed to that note's convention. |
-
-Compuon and HESM are deliberately presented as general application designs in the
-paper, not as public empirical datasets or citeable validation results. Their
-local-code motivation remains documented in `docs/qa-applications.md`.
