@@ -6,7 +6,7 @@ interruptions, then reports observed corruption. It does not manipulate power
 sequencing, prove hardware health, or locate the original cause by itself.
 
 The author's 2018 use involved independent Linux kernel threads, including a
-reported near-100% reproduction of a vendor BSP paging/PM issue. That is a
+reported near-100% reproduction of a certain vendor's BSP paging/PM issue. That is a
 historical recollection, not a measured result of this rewrite.
 
 ## Design principle
