@@ -13,10 +13,7 @@ corruption. The current injection campaign evaluates only the observation side.
 The proposed comparative study separates dependency retention and background
 scenarios as two experimental factors; no activation benefit is claimed as measured.
 
-Publication author details are awaiting user confirmation. The current anonymous
-block is temporary and must be replaced before upload. No author identities,
-affiliations, funding, conflicts or historical data are inferred. See
-[arXiv preparation](ARXIV.md) for the upload package and form metadata.
+The publication author is Sunchul Jung. No affiliation, email address, or ORCID has been supplied.
 
 The new evidence consists of 61,440 single-bit-injection cases and 120 clean
 controls, each run in native ARM64, portable-C and native ASan/UBSan configurations.
@@ -77,7 +74,7 @@ required by the experiments.
 The target is an arXiv preprint. Keep the current compact scholarly format; no
 conference template or anonymous review mode is needed. The paper preserves its
 controlled-experiment scope and distinguishes proposed system campaigns from results.
-After confirming publication author details, run:
+With the publication author specified, run:
 
 ```sh
 tools/build_paper.sh

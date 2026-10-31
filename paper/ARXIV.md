@@ -4,10 +4,9 @@ Target: an arXiv preprint, not an anonymous conference submission.
 
 ## Files
 
-- `output/paper/bitoxin-arxiv-draft.zip`: current package while publication
-  author details are pending; suitable for review and local verification.
+- `output/paper/bitoxin-arxiv-draft.zip`: optional draft package for review and local verification.
 - `output/paper/bitoxin-arxiv-upload.zip`: article source, bibliography and
-  ancillary reproducibility files. Upload this ZIP after author details are set.
+  ancillary reproducibility files. The manuscript specifies Sunchul Jung as the author.
 - `output/pdf/bitoxin-paper-en.pdf`: locally checked reading copy. The PDF built
   by arXiv must also be inspected during submission.
 - `output/paper/arxiv-metadata.json`: title, plain-text abstract and suggested
