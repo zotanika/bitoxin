@@ -41,8 +41,8 @@ reproduce the new campaign, and no Linux module is loaded by that campaign.
 
 ## Metadata still supplied by the author
 
-The publication name(s), order and any affiliation must be confirmed by the
-user. Email is optional. The upload builder rejects anonymous/empty authors by
+The publication author is Sunchul Jung. Affiliation and email have not been
+specified; email is optional. The upload builder rejects anonymous/empty authors by
 default; its `--draft` switch is only for local package verification and writes
 an explicitly named draft ZIP. No draft package should be uploaded as a finished
 submission. A distribution license is chosen by the submitting author in arXiv;
