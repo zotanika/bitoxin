@@ -124,13 +124,13 @@ The [English paper](output/pdf/bitoxin-paper-en.pdf) develops the stateful-testi
 related work and 61,440 controlled bit-injection trials, separating measured
 observability from unmeasured field defect discovery. [Editable source and reproduction
 instructions](paper/README.md) include LaTeX/BibTeX and per-trial data. The paper targets arXiv; [upload preparation](paper/ARXIV.md) describes its source
-package and reproducibility supplement. Publication author details are pending.
+package and reproducibility supplement. The paper author is Sunchul Jung.
 
 ## Design and validation
 
 - [Verification record](docs/verification.md): actual checks and remaining limits.
 - [Testing method](docs/testing-method.md): state retention, observation and campaign design.
-- [White paper source](docs/whitepaper.ko.md) and [PDF](output/pdf/bitoxin-whitepaper-ko.pdf).
+- [White paper source](docs/whitepaper.ko.md).
 
 Reproduce Linux compile/tests using `tools/Dockerfile.verify` and
 `tools/verify-linux.sh`. These use a disposable build tree and read-only source:
