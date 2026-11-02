@@ -93,6 +93,19 @@ int main(void)
     assert(bx_init(&p, NULL, 64, 1) == BX_BAD_CONFIG);
     assert(bx_init(NULL, a, 64, 1) == BX_BAD_CONFIG);
     puts("PASS invalid sizes, seeds and pointers rejected");
+
+    /* Traversal state lives in memory: a corrupted tap mask derails the walk. */
+    assert(bx_init(&p, a, 512, 1) == BX_OK);
+    assert(bx_run(&p, 100) == BX_OK);
+    p.taps ^= 0x40U;
+    assert(bx_run(&p, 1) == BX_STATE_ERROR);
+    assert(bx_init(&p, a, 512, 1) == BX_OK);
+    assert(bx_set_lane(&p, 0, 0) == BX_BAD_CONFIG);
+    assert(bx_set_lane(&p, BX_MAX_ROUNDS + 1, 0) == BX_BAD_CONFIG);
+    assert(bx_set_lane(&p, 7, 0) == BX_OK && p.rounds == 7);
+    until_pass(&p, 2, 333);
+    assert(p.error.lane_index == -1);
+    puts("PASS memory-resident taps and lane rounds");
     puts("ALL CORE TESTS PASSED");
     return 0;
 }

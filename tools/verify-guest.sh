@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 set -eu
 work=$(mktemp -d /tmp/bitoxin-guest.XXXXXX)
-cp /src/bitoxin.c /src/bitoxin_core.c /src/bitoxin_core.h /src/bitoxin_lane.h /src/Makefile /src/Kbuild "$work/"
+cp /src/*.c /src/*.h /src/Makefile /src/Kbuild "$work/"
 headers=$(find /usr/src -maxdepth 1 -type d -name 'linux-headers-*-arm64' | sort | tail -n 1)
 make -C "$work" module KDIR="$headers" W=1
 mkdir -p "$work/root/bin" "$work/root/dev" "$work/root/proc" "$work/root/sys"

@@ -2,7 +2,7 @@
 set -eu
 # Run in tools/Dockerfile.verify with this repository mounted read-only at /src.
 mkdir -p /tmp/bitoxin-verify
-cp /src/bitoxin.c /src/bitoxin_core.c /src/bitoxin_core.h /src/bitoxin_lane.h /src/Makefile /src/Kbuild /tmp/bitoxin-verify/
+cp /src/*.c /src/*.h /src/Makefile /src/Kbuild /tmp/bitoxin-verify/
 cp -R /src/tests /src/tools /tmp/bitoxin-verify/
 cd /tmp/bitoxin-verify
 make test

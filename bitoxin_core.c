@@ -7,6 +7,10 @@
 #include <string.h>
 #endif
 
+static const char *const lane_names[BX_LANE_REGS] = BX_LANE_NAMES;
+static const signed char lane_regnos[BX_LANE_REGS] = BX_LANE_REGNOS;
+static const signed char trap_regnos[4] = BX_TRAP_REGNOS;
+
 /* Right-shift Galois masks, degrees 9..30; original lfsrtabs.h convention.
  * Degree 14 corrects the legacy 0x201d mask. Every mask's order is tested. */
 static const bx_u32 taps[] = {
@@ -32,6 +36,10 @@ static int valid_size(bx_u32 bytes)
 static int fail(struct bx_probe *p, enum bx_result code, bx_u32 bit,
                 bx_u64 expected, bx_u64 observed)
 {
+    /* Lane failures trap inside the lane; these are detected in C. */
+    if (p->trap && (code == BX_DATA_ERROR || code == BX_STATE_ERROR))
+        bx_trap_now(code == BX_DATA_ERROR ? BX_LANE_DATA : BX_LANE_STATE,
+                    expected, observed, bit);
     p->error.code = code;
     p->error.phase = p->phase;
     p->error.bit = bit;
@@ -41,11 +49,20 @@ static int fail(struct bx_probe *p, enum bx_result code, bx_u32 bit,
     return code;
 }
 
+static int lane_fail(struct bx_probe *p, bx_u32 index, bx_u64 token, bx_u64 carried)
+{
+    p->error.lane_index = bx_lane_decode(token, p->lane_regs, &p->error.lane_expected,
+                                         &p->error.lane_observed);
+    p->error.lane_simd = 0;
+    return fail(p, BX_REGISTER_ERROR, index, token, carried);
+}
+
 int bx_init(struct bx_probe *p, volatile bx_u8 *buffer, bx_u32 bytes, bx_u32 seed)
 {
     bx_u32 i;
     if (!p) return BX_BAD_CONFIG;
     memset(p, 0, sizeof(*p));
+    p->error.lane_index = -1;
     if (!buffer || !valid_size(bytes) || !seed || seed >= bytes * 8U) {
         p->error.code = BX_BAD_CONFIG;
         return BX_BAD_CONFIG;
@@ -58,7 +75,17 @@ int bx_init(struct bx_probe *p, volatile bx_u8 *buffer, bx_u32 bytes, bx_u32 see
     p->taps = mask_for(bytes);
     p->expected = 1;
     p->phase = BX_WALK;
+    p->rounds = 1;
     for (i = 0; i < bytes; ++i) buffer[i] = 0xff;
+    return BX_OK;
+}
+
+int bx_set_lane(struct bx_probe *p, bx_u32 rounds, int trap)
+{
+    if (!p || !rounds || rounds > BX_MAX_ROUNDS)
+        return BX_BAD_CONFIG;
+    p->rounds = rounds;
+    p->trap = trap ? 1 : 0;
     return BX_OK;
 }
 
@@ -69,6 +96,7 @@ int bx_run(struct bx_probe *p, bx_u32 budget)
     if (!p->buffer || !valid_size(p->bytes) || p->bits != p->bytes * 8U ||
         p->taps != mask_for(p->bytes) || !p->seed || p->seed >= p->bits ||
         !p->lfsr || p->lfsr >= p->bits || p->expected > 1 ||
+        !p->rounds || p->rounds > BX_MAX_ROUNDS || p->trap > 1 ||
         (p->phase != BX_WALK && p->phase != BX_VERIFY) ||
         p->walked > p->bits || p->verified > p->bytes ||
         (p->phase == BX_WALK && p->verified != 0))
@@ -76,31 +104,37 @@ int bx_run(struct bx_probe *p, bx_u32 budget)
 
     while (budget--) {
         if (p->phase == BX_WALK) {
-            bx_u32 index;
-            bx_u8 observed, bit, mask;
-            bx_u64 token, carried, difference;
+            bx_u32 index, lfsr, status;
+            bx_u8 observed, mask;
+            bx_u64 token, carried;
             if (p->walked >= p->bits)
                 return fail(p, BX_STATE_ERROR, 0, p->bits - 1, p->walked);
+            /* Traversal state is reloaded from memory every step (2018 design). */
+            lfsr = *(volatile bx_u32 *)&p->lfsr;
             if (p->walked == p->bits - 1) {
-                if (p->lfsr != p->seed)
-                    return fail(p, BX_STATE_ERROR, 0, p->seed, p->lfsr);
+                if (lfsr != p->seed)
+                    return fail(p, BX_STATE_ERROR, 0, p->seed, lfsr);
                 index = 0; /* Zero is outside the LFSR cycle, inside the test. */
             } else {
-                p->lfsr = (p->lfsr >> 1) ^ ((0U - (p->lfsr & 1U)) & p->taps);
-                index = p->lfsr;
+                bx_u32 taps = *(volatile bx_u32 *)&p->taps;
+                lfsr = (lfsr >> 1) ^ ((0U - (lfsr & 1U)) & taps);
+                if (!lfsr || lfsr >= p->bits)
+                    return fail(p, BX_STATE_ERROR, 0, p->bits, lfsr);
+                *(volatile bx_u32 *)&p->lfsr = lfsr;
+                index = lfsr;
             }
+            *(volatile bx_u32 *)&p->cursor = index;
             observed = p->buffer[index >> 3];
             mask = (bx_u8)(1U << (index & 7U));
-            bit = (observed & mask) != 0;
-            if (bit != p->expected)
-                return fail(p, BX_DATA_ERROR, index, p->expected, bit);
-
             /* Actual load in the low byte; varied upper bits exercise the GPRs.
-             * The checked result supplies the store. No cache flush is implied. */
+             * The lane checks the bit and supplies the store. */
             token = (((bx_u64)index * 0x9e3779b97f4a7c15ULL) & ~0xffULL) | observed;
-            carried = bx_register_lane(token, &difference);
-            if (difference != 0)
-                return fail(p, BX_REGISTER_ERROR, index, token, carried);
+            carried = bx_lane(token, (index & 7U) | ((bx_u64)p->expected << 8),
+                              p->rounds, p->trap ? NULL : p->lane_regs, &status);
+            if (status == BX_LANE_MEMORY)
+                return fail(p, BX_DATA_ERROR, index, p->expected, !p->expected);
+            if (status != BX_LANE_OK)
+                return lane_fail(p, index, token, carried);
             p->buffer[index >> 3] = (bx_u8)carried ^ mask;
             ++p->walked;
             ++p->operations;
@@ -141,9 +175,40 @@ const char *bx_result_name(enum bx_result code)
 
 const char *bx_backend_name(void)
 {
-#if defined(__aarch64__) && !defined(BX_PORTABLE)
-    return "aarch64-gpr";
-#else
-    return "portable-c";
-#endif
+    return BX_BACKEND_NAME;
+}
+
+int bx_lane_count(void)
+{
+    return BX_LANE_REGS;
+}
+
+const char *bx_lane_reg_name(int index)
+{
+    return index >= 0 && index < BX_LANE_REGS ? lane_names[index] : "";
+}
+
+int bx_lane_regno(int index)
+{
+    return index >= 0 && index < BX_LANE_REGS ? lane_regnos[index] : -1;
+}
+
+int bx_trap_regno(enum bx_trap_reg reg)
+{
+    return (unsigned)reg < 4U ? trap_regnos[reg] : -1;
+}
+
+int bx_lane_decode(bx_u64 token, const bx_u64 *regs, bx_u64 *expected, bx_u64 *observed)
+{
+    bx_u64 v = token;
+    int k;
+    for (k = 0; k < BX_LANE_REGS; ++k) {
+        v = bx_lane_ref_step((unsigned)k, v);
+        if (regs[k] != v) {
+            *expected = v;
+            *observed = regs[k];
+            return k;
+        }
+    }
+    return -1;
 }

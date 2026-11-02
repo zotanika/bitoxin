@@ -29,9 +29,16 @@ static bx_u32 advance(unsigned degree, bx_u32 tap, bx_u32 steps)
 }
 static void check_lane(bx_u64 input)
 {
-    bx_u64 difference = ~0ULL;
-    assert(bx_register_lane(input, &difference) == input);
-    assert(difference == 0);
+    bx_u64 snapshot[BX_LANE_MAX];
+    bx_u32 status = 99;
+    /* Bit 0 of the token is checked against expected (bit 8 of the check word). */
+    bx_u64 check = (bx_u64)(input & 1U) << 8;
+    assert(bx_lane(input, check, 1, snapshot, &status) == input);
+    assert(status == BX_LANE_OK);
+    assert(bx_lane(input, check, 3, snapshot, &status) == input);
+    assert(status == BX_LANE_OK);
+    assert(bx_lane(input, check ^ 0x100U, 1, snapshot, &status) == input);
+    assert(status == BX_LANE_MEMORY);
 }
 
 int main(void)
