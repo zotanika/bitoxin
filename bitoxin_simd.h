@@ -83,7 +83,7 @@ static inline struct bx_v128 bx_v128_dup(bx_u64 token)
 #endif
 #define BX_N(p, op, r) op "\n\t" BX_SIMD_F(p, r) BX_N_FLIP(r) ".endif\n\t"
 /* Both halves of v30 are compared with the GPR token in x0, not with v0, so a
- * faulty dup or a flipped v0 is caught as well. */
+ * faulty dup or a v0 flipped before its use (stage 1) is caught as well. */
 static inline bx_u64 bx_simd_lane(bx_u64 token, bx_u64 check, bx_u64 *snapshot,
                                   bx_u32 *status)
 {
