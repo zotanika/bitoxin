@@ -2,11 +2,18 @@
 #include "bitoxin_core.h"
 #include "bitoxin_lane.h"
 #ifdef __KERNEL__
+#include <linux/freezer.h>
+#include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/string.h>
-static inline void bx_yield(void) { cond_resched(); }
+#define bx_might_sleep() might_sleep()
+/* The audit only reads, so a freezable worker may freeze mid-audit; a long
+ * post-thaw audit then does not stall the next suspend. try_to_freeze() is a
+ * no-op for non-freezable threads. */
+static inline void bx_yield(void) { cond_resched(); try_to_freeze(); }
 #else
 #include <string.h>
+#define bx_might_sleep() do { } while (0)
 static inline void bx_yield(void) { }
 #endif
 #define BX_YIELD_MASK 0xffffU /* bx_audit yields every 65536 iterations */
@@ -185,11 +192,12 @@ static unsigned popcount8(bx_u8 v)
 /* Check the whole retained state without changing it. Replaying the walk proves
  * every visited bit is flipped; counting flipped bits then proves no unvisited
  * bit is. O(walked + bytes) time, no extra memory.
- * Kernel: may sleep; call from workers only, never atomic context (the hook). */
+ * Kernel: may sleep (and freeze); workers only, never atomic context (the BSP hook). */
 int bx_audit(struct bx_probe *p)
 {
     bx_u32 i, lfsr, flipped = 0;
     bx_u8 visited;
+    bx_might_sleep();
     if (!p) return BX_BAD_CONFIG;
     if (p->error.code != BX_OK) return p->error.code;
     if (!valid_state(p))
@@ -200,6 +208,8 @@ int bx_audit(struct bx_probe *p)
         /* Same phase invariants and report as bx_run's verify step. */
         if (p->walked != p->bits || p->verified >= p->bytes)
             return fail(p, BX_STATE_ERROR, 0, p->bytes - 1, p->verified);
+        if (p->lfsr != p->seed) /* the closing walk step left it there */
+            return fail(p, BX_STATE_ERROR, 0, p->seed, p->lfsr);
         for (i = 0; i < p->bytes; ++i) {
             bx_u8 got = p->buffer[i]; /* report the byte that was compared */
             if (got != want)
