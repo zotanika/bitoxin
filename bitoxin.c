@@ -50,7 +50,7 @@ MODULE_PARM_DESC(freezable, "Cooperate with the suspend freezer (default false: 
 module_param(panic_on_error, bool, 0444);
 MODULE_PARM_DESC(panic_on_error, "Record mode: panic after logging the first probe failure (default false); with trap=1 use kernel.panic_on_oops=1 instead");
 module_param(trap, bool, 0444);
-MODULE_PARM_DESC(trap, "Trap in place (brk/ebreak) on any failure with chain registers live; the trap oopses (panic_on_error does not apply: set kernel.panic_on_oops=1 to panic)");
+MODULE_PARM_DESC(trap, "Trap in place (brk/ebreak) on any failure with chain registers live; the trap oopses (riscv64: always panics); panic_on_error does not apply, set kernel.panic_on_oops=1 to panic");
 module_param(lane_rounds, uint, 0444);
 MODULE_PARM_DESC(lane_rounds, "Register-chain repetitions per operation (1..65536); chunk * lane_rounds <= 16777216, so above 4096 lower chunk; an explicit hook_budget needs hook_budget * lane_rounds <= 65536");
 module_param(churn, bool, 0444);
@@ -259,12 +259,15 @@ static bool is_bitoxin_trap(unsigned long pc)
  * C-detected traps (kinds 3, 4): A = expected, B = observed, C = bit. The
  * kernel has no FP/SIMD lane (kind 5).
  *
- * The trap is a deliberate oops: the trapping task dies (a worker leaves its
- * slot "trapped"; unload still works) or, in IRQ context, the kernel panics.
- * On arm64 6.1 a worker that dies in the EL1 debug handler also leaves a
- * one-time context-tracking WARNING (ct_kernel_exit, after "exited with irqs
- * disabled") and taints the kernel (D, W). That is inherent to dying there,
- * not a second failure: reboot before a further campaign. */
+ * The trap is a deliberate oops, reported here before the kernel acts on it.
+ * arm64: the trapping task dies (a worker leaves its slot "trapped" and unload
+ * still works); in IRQ context the kernel panics. On arm64 6.1 a worker that
+ * dies in the EL1 debug handler also leaves a one-time context-tracking
+ * WARNING (ct_kernel_exit, after "exited with irqs disabled") and taints the
+ * kernel (D, W). That is inherent to dying there, not a second failure:
+ * reboot before a further campaign. riscv64 (6.12): the kernel handles every
+ * S-mode ebreak inside irqentry_nmi_enter(), so die() sees in_interrupt() and
+ * panics ("Fatal exception in interrupt") for any trap, worker or hook. */
 static int bx_die(struct notifier_block *nb, unsigned long val, void *data)
 {
     static const char *const kinds[] = { "none", "register", "memory", "data", "state" };

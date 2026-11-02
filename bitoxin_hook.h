@@ -9,8 +9,9 @@
  *   ct_cpuidle_enter() (or before ct_cpuidle_exit()), not in early entry code.
  *   Unloading waits for callers with synchronize_rcu().
  * - With trap=1 a failing call traps in place and oopses: in IRQ context, or
- *   with locks held, that ends in a panic or a dead task holding the locks.
- *   Record mode (trap=0) only logs and latches the failure.
+ *   with locks held, that ends in a panic or a dead task holding the locks
+ *   (riscv64 panics for every trap). Record mode (trap=0) only logs and
+ *   latches the failure.
  * - The site is __func__: a C identifier, which keeps the status JSON and the
  *   BITOXIN_TRAP record one token (other characters are printed as '?').
  *

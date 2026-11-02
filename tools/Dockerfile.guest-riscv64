@@ -1,0 +1,11 @@
+# Native (arm64) host image that boots a riscv64 Debian kernel under QEMU TCG.
+# The kernel package must match the headers in tools/Dockerfile.verify-riscv64
+# (both trixie); tools/verify-guest.sh compares the releases and fails fast.
+FROM debian:trixie-slim
+RUN dpkg --add-architecture riscv64 && apt-get update && apt-get install -y --no-install-recommends \
+    qemu-system-riscv opensbi cpio python3 xz-utils kmod ca-certificates \
+    && mkdir -p /opt/riscv64 && cd /tmp \
+    && image=$(apt-cache depends linux-image-riscv64:riscv64 | awk '/Depends: linux-image-[0-9]/ {print $2; exit}') \
+    && apt-get download "$image" busybox-static:riscv64 \
+    && for deb in *.deb; do dpkg-deb -x "$deb" /opt/riscv64; done \
+    && rm -f *.deb && rm -rf /var/lib/apt/lists/*
