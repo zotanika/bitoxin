@@ -27,6 +27,13 @@ static bx_u32 advance(unsigned degree, bx_u32 tap, bx_u32 steps)
     }
     return value;
 }
+static void check_lane(bx_u64 input)
+{
+    bx_u64 difference = ~0ULL;
+    assert(bx_register_lane(input, &difference) == input);
+    assert(difference == 0);
+}
+
 int main(void)
 {
     for (unsigned degree = 9; degree <= 30; ++degree) {
@@ -49,12 +56,12 @@ int main(void)
     }
     for (unsigned i = 0; i < 64; ++i) {
         bx_u64 v = 1ULL << i;
-        assert(bx_register_lane(v) == v);
-        assert(bx_register_lane(~v) == ~v);
+        check_lane(v);
+        check_lane(~v);
     }
     for (bx_u64 i = 0; i < 10000; ++i) {
         bx_u64 v = i * 0x9e3779b97f4a7c15ULL;
-        assert(bx_register_lane(v) == v);
+        check_lane(v);
     }
     puts("PASS all 22 LFSR orders and 10128 register-lane inputs");
     return 0;

@@ -25,6 +25,7 @@ test: $(BUILD)/test-core $(BUILD)/test-portable $(BUILD)/test-lfsr $(BUILD)/test
 	$(BUILD)/test-lfsr
 	$(BUILD)/test-lane-fault
 	BITOXIN_RUNNER=$(abspath $(BUILD)/bitoxin-run) $(PYTHON) tests/test_runner.py
+	CC="$(CC)" $(PYTHON) tests/test_codegen.py
 sanitize:
 	$(MAKE) BUILD=$(BUILD)/sanitize CFLAGS='-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' test
 module:

@@ -78,7 +78,7 @@ int bx_run(struct bx_probe *p, bx_u32 budget)
         if (p->phase == BX_WALK) {
             bx_u32 index;
             bx_u8 observed, bit, mask;
-            bx_u64 token, carried;
+            bx_u64 token, carried, difference;
             if (p->walked >= p->bits)
                 return fail(p, BX_STATE_ERROR, 0, p->bits - 1, p->walked);
             if (p->walked == p->bits - 1) {
@@ -98,8 +98,8 @@ int bx_run(struct bx_probe *p, bx_u32 budget)
             /* Actual load in the low byte; varied upper bits exercise the GPRs.
              * The checked result supplies the store. No cache flush is implied. */
             token = (((bx_u64)index * 0x9e3779b97f4a7c15ULL) & ~0xffULL) | observed;
-            carried = bx_register_lane(token);
-            if (carried != token)
+            carried = bx_register_lane(token, &difference);
+            if (difference != 0)
                 return fail(p, BX_REGISTER_ERROR, index, token, carried);
             p->buffer[index >> 3] = (bx_u8)carried ^ mask;
             ++p->walked;

@@ -3,7 +3,11 @@
  * high-register-bit error must be caught before changing test memory. */
 #include "bitoxin_core.h"
 #define BITOXIN_LANE_H
-static bx_u64 bx_register_lane(bx_u64 x) { return x ^ (1ULL << 61); }
+static bx_u64 bx_register_lane(bx_u64 x, bx_u64 *difference)
+{
+    *difference = 1ULL << 61;
+    return x ^ *difference;
+}
 #include "../bitoxin_core.c"
 #include <assert.h>
 #include <stdio.h>
