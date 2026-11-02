@@ -114,6 +114,9 @@ static uint64_t read_counter(const char *path)
 }
 #endif
 
+/* An unreadable counter reads 0 (absent in containers: always 0). A transient
+ * read failure looks like attempts twice, as the sum drops and comes back: up
+ * to two extra suspends and audits, never a missed one. */
 static void sample(struct bx_sleep_sample *s)
 {
 #if defined(__linux__)
@@ -129,6 +132,23 @@ static void sample(struct bx_sleep_sample *s)
 #endif
 }
 
+#if defined(__linux__)
+static void pin_home(const struct worker *w)
+{
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    CPU_SET(w->home_cpu, &set);
+    /* EINVAL while the home CPU is offline: ignored, track_cpu retries. */
+    (void)pthread_setaffinity_np(pthread_self(), sizeof(set), &set);
+}
+#endif
+
+/* Counts moves between CPUs after the baseline taken at worker start. A pinned
+ * per-CPU worker moves only when it loses its affinity (home CPU offlined); it
+ * is pinned back once the CPU returns, so one hotplug cycle counts 2 (off home,
+ * back home) plus any moves while the home CPU is offline. Under a cgroup-v1
+ * cpuset an offlined CPU may never come back to the set: the worker then stays
+ * elsewhere, visible as cpu != home_cpu. */
 static void track_cpu(struct worker *w)
 {
 #if defined(__linux__)
@@ -136,11 +156,7 @@ static void track_cpu(struct worker *w)
     if (cpu >= 0 && w->cpu >= 0 && cpu != w->cpu) ++w->cpu_changes;
     if (cpu >= 0) w->cpu = cpu;
     if (per_cpu && cpu != w->home_cpu) {
-        cpu_set_t set;
-        CPU_ZERO(&set);
-        CPU_SET(w->home_cpu, &set);
-        /* EINVAL while the home CPU is offline; retried every chunk. */
-        (void)pthread_setaffinity_np(pthread_self(), sizeof(set), &set);
+        pin_home(w);
         cpu = sched_getcpu();
         if (cpu >= 0 && cpu != w->cpu) { ++w->cpu_changes; w->cpu = cpu; }
     }
@@ -149,32 +165,33 @@ static void track_cpu(struct worker *w)
 #endif
 }
 
+/* Audit the retained state after a suspend or attempt. Runs before a churn
+ * releases the buffer: at a pass boundary the audit rechecks all of it. */
+static int audit_after_suspend(struct worker *w)
+{
+    unsigned gen = atomic_load(&suspend_gen);
+    if (gen == w->seen_gen) return BX_OK;
+    w->seen_gen = gen;
+    return bx_audit(&w->probe);
+}
+
+/* seen_gen starts at 0 (calloc), the generation of the monitor's first sample
+ * taken before setup, so a suspend during setup is audited. */
 static void *run_worker(void *arg)
 {
     struct worker *w = arg;
-    w->seen_gen = atomic_load(&suspend_gen);
-    track_cpu(w);
+#if defined(__linux__)
+    if (per_cpu) pin_home(w);
+    w->cpu = sched_getcpu();   /* uncounted baseline: the start CPU is not a move */
+#endif
     while (!atomic_load(&interrupted) && !atomic_load(&abort_run) &&
            (!passes || w->probe.passes < passes)) {
         uint64_t before = w->probe.passes;
-        if (bx_run(&w->probe, chunk) != BX_OK) {
+        if (bx_run(&w->probe, chunk) != BX_OK || audit_after_suspend(w) != BX_OK ||
+            (churn && w->probe.passes != before && (!passes || w->probe.passes < passes) &&
+             rebind_buffer(w) != BX_OK)) {
             atomic_store(&abort_run, 1);
             break;
-        }
-        if (churn && w->probe.passes != before && (!passes || w->probe.passes < passes) &&
-            rebind_buffer(w) != BX_OK) {
-            atomic_store(&abort_run, 1);
-            break;
-        }
-        {
-            unsigned gen = atomic_load(&suspend_gen);
-            if (gen != w->seen_gen) {     /* audit the retained state after thaw */
-                w->seen_gen = gen;
-                if (bx_audit(&w->probe) != BX_OK) {
-                    atomic_store(&abort_run, 1);
-                    break;
-                }
-            }
         }
         track_cpu(w);
         if (pause_ms) {
@@ -265,6 +282,7 @@ int main(int argc, char **argv)
     struct worker *workers;
     struct sigaction action;
     struct timespec start, end;
+    struct bx_sleep_sample prev, cur;
     unsigned i, created = 0, allocated = 0;
     int setup_error = 0, failed, result, a;
     const char *status;
@@ -322,6 +340,7 @@ int main(int argc, char **argv)
                 kib, kib * 8192U);
         goto bad_args;
     }
+    sample(&prev);   /* before any probe state exists: see run_worker */
     for (i = 0; !setup_error && i < nthreads; ++i) {
         unsigned s = 1U + ((seed - 1U + i) % (kib * 8192U - 1U));
         workers[i].id = i;
@@ -344,29 +363,27 @@ int main(int argc, char **argv)
         ++created;
     }
     if (setup_error) atomic_store(&abort_run, 1);
-    {
-        struct bx_sleep_sample prev, cur;
-        sample(&prev);
-        while (atomic_load(&active) > 0) {
-            struct timespec tick = { 0, 50L * 1000000L };
-            uint64_t slept;
-            (void)nanosleep(&tick, NULL);
-            sample(&cur);
-            if (bx_suspended(&prev, &cur, &slept)) {
-                ++suspends;
-                suspended_ms += slept / 1000000U;
-                atomic_fetch_add(&suspend_gen, 1);
-            }
-            prev = cur;
+    /* The last tick can count a suspend after every worker has exited, so a run
+     * can end with suspends >= 1 and audits 0. */
+    while (atomic_load(&active) > 0) {
+        struct timespec tick = { 0, 50L * 1000000L };
+        uint64_t slept;
+        (void)nanosleep(&tick, NULL);
+        sample(&cur);
+        if (bx_suspended(&prev, &cur, &slept)) {
+            ++suspends;
+            suspended_ms += slept / 1000000U;
+            atomic_fetch_add(&suspend_gen, 1);
         }
+        prev = cur;
     }
     for (i = 0; i < created; ++i) pthread_join(workers[i].thread, NULL);
     clock_gettime(CLOCK_MONOTONIC, &end);
-    /* A recorded error always wins over an interruption. */
-    failed = atomic_load(&abort_run);
+    /* A recorded probe error wins over setup failure and interruption. */
+    failed = !setup_error && atomic_load(&abort_run);
     for (i = 0; i < created; ++i)
         if (workers[i].probe.error.code != BX_OK) failed = 1;
-    result = setup_error ? 3 : failed ? 1 : atomic_load(&interrupted) ? 130 : 0;
+    result = failed ? 1 : setup_error ? 3 : atomic_load(&interrupted) ? 130 : 0;
     status = result == 3 ? "setup_failed" : result == 1 ? "failed" :
              result == 130 ? "interrupted" : "complete";
     printf("{\"schema\":2,\"status\":\"%s\",\"backend\":\"%s\",\"kib_per_worker\":%u,"

@@ -97,6 +97,7 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual([w['home_cpu'] for w in data['workers']], cpus)
         for w in data['workers']:
             self.assertEqual(w['cpu'], w['home_cpu'])
+            self.assertEqual(w['cpu_changes'], 0)   # pinned: moves only if affinity is lost
 
     @unittest.skipIf(sys.platform.startswith('linux'), 'non-Linux behaviour')
     def test_per_cpu_unsupported_elsewhere(self):
