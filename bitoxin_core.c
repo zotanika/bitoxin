@@ -182,6 +182,25 @@ int bx_run(struct bx_probe *p, bx_u32 budget)
     return BX_OK;
 }
 
+/* Replace the buffer between verified passes (allocation churn). The new buffer
+ * gets the uniform value the finished pass left behind. */
+int bx_rebind(struct bx_probe *p, volatile bx_u8 *buffer)
+{
+    bx_u32 i;
+    bx_u8 fill;
+    if (!p || !buffer)
+        return BX_BAD_CONFIG;
+    if (p->error.code != BX_OK)
+        return p->error.code;
+    if (p->phase != BX_WALK || p->walked || p->verified || p->lfsr != p->seed)
+        return BX_BAD_CONFIG;
+    fill = p->expected ? 0xff : 0x00;
+    for (i = 0; i < p->bytes; ++i)
+        buffer[i] = fill;
+    p->buffer = buffer;
+    return BX_OK;
+}
+
 static unsigned popcount8(bx_u8 v)
 {
     unsigned n = 0;

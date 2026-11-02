@@ -106,6 +106,19 @@ int main(void)
     until_pass(&p, 2, 333);
     assert(p.error.lane_index == -1);
     puts("PASS memory-resident taps and lane rounds");
+
+    /* Rebinding is a pass-boundary operation that keeps counters and polarity. */
+    assert(bx_init(&p, a, 512, 9) == BX_OK);
+    until_pass(&p, 1, 4096);
+    memset(b, 0x5a, sizeof(b));
+    assert(bx_rebind(&p, b) == BX_OK);
+    for (i = 0; i < sizeof(b); ++i) assert(b[i] == 0);
+    until_pass(&p, 3, 999);
+    assert(p.passes == 3 && p.operations == 3U * 4608U && p.buffer == b);
+    assert(bx_run(&p, 10) == BX_OK);
+    assert(bx_rebind(&p, a) == BX_BAD_CONFIG);
+    assert(bx_rebind(&p, NULL) == BX_BAD_CONFIG);
+    puts("PASS rebind at pass boundaries only");
     puts("ALL CORE TESTS PASSED");
     return 0;
 }
