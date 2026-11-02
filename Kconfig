@@ -5,4 +5,8 @@ config BITOXIN_QA
 	help
 	  Preemptible register-chain and retained-memory probe for QA campaigns,
 	  with BITOXIN_PROBE() insertion points (see bitoxin_hook.h).
+
+	  Built in (=y), it starts at boot with the module defaults, which
+	  include one probe worker; boot with bitoxin_qa.threads=0 for the
+	  hook alone. As a module (=m), only module callers reach the hook.
 	  If unsure, say N.

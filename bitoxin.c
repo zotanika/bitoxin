@@ -30,7 +30,7 @@
 /* Large probe buffers must fail, not wake the OOM killer, when memory is short. */
 #define BX_GFP (GFP_KERNEL | __GFP_NOWARN | __GFP_NORETRY)
 static unsigned int threads = 1, mem_kib = 1024, seed = 1, chunk = 4096, pause_ms;
-static unsigned int lane_rounds = 1, hook_budget = 4096;
+static unsigned int lane_rounds = 1, hook_budget, hook_ops;
 static unsigned long long passes;
 static bool freezable, panic_on_error, trap, churn, per_cpu;
 module_param(threads, uint, 0444);
@@ -40,7 +40,7 @@ MODULE_PARM_DESC(mem_kib, "Power-of-two KiB per worker, 0 = largest that allocat
 module_param(seed, uint, 0444);
 MODULE_PARM_DESC(seed, "Nonzero first-worker seed, smaller than buffer bit count");
 module_param(chunk, uint, 0444);
-MODULE_PARM_DESC(chunk, "Operations between stop/freezer/status checks (1..65536); a chunk has no scheduling point, so chunk * lane_rounds <= 16777216");
+MODULE_PARM_DESC(chunk, "Operations between stop/freezer/status checks (1..65536); a chunk has no scheduling point, so chunk * lane_rounds <= 16777216 (lane_rounds above 4096 needs a smaller chunk)");
 module_param(pause_ms, uint, 0444);
 MODULE_PARM_DESC(pause_ms, "Optional interruptible pause per chunk (0..1000 ms)");
 module_param(passes, ullong, 0444);
@@ -48,17 +48,17 @@ MODULE_PARM_DESC(passes, "Verified directional passes per worker; zero runs unti
 module_param(freezable, bool, 0444);
 MODULE_PARM_DESC(freezable, "Cooperate with the suspend freezer (default false: run through transitions)");
 module_param(panic_on_error, bool, 0444);
-MODULE_PARM_DESC(panic_on_error, "Panic after logging the first probe failure (default false)");
+MODULE_PARM_DESC(panic_on_error, "Record mode: panic after logging the first probe failure (default false); with trap=1 use kernel.panic_on_oops=1 instead");
 module_param(trap, bool, 0444);
-MODULE_PARM_DESC(trap, "Trap in place (brk/ebreak) on any failure with chain registers live");
+MODULE_PARM_DESC(trap, "Trap in place (brk/ebreak) on any failure with chain registers live; the trap oopses (panic_on_error does not apply: set kernel.panic_on_oops=1 to panic)");
 module_param(lane_rounds, uint, 0444);
-MODULE_PARM_DESC(lane_rounds, "Register-chain repetitions per operation (1..65536); chunk * lane_rounds <= 16777216, hook_budget * lane_rounds <= 65536");
+MODULE_PARM_DESC(lane_rounds, "Register-chain repetitions per operation (1..65536); chunk * lane_rounds <= 16777216, so above 4096 lower chunk; an explicit hook_budget needs hook_budget * lane_rounds <= 65536");
 module_param(churn, bool, 0444);
 MODULE_PARM_DESC(churn, "Replace each worker buffer with a fresh vmalloc at verified pass boundaries; the next buffer is allocated before the old is freed, so with mem_kib=0 most churns may fail (counted; no OOM kill)");
 module_param(per_cpu, bool, 0444);
 MODULE_PARM_DESC(per_cpu, "One worker per online CPU, re-pinned to its home CPU after hotplug");
 module_param(hook_budget, uint, 0444);
-MODULE_PARM_DESC(hook_budget, "Operations per bitoxin_probe_point() call (1..65536); the call runs with preemption disabled, so hook_budget * lane_rounds <= 65536");
+MODULE_PARM_DESC(hook_budget, "Operations per bitoxin_probe_point() call; 0 (default) = min(4096, 65536 / lane_rounds). The call runs with preemption disabled, so an explicit value needs hook_budget * lane_rounds <= 65536");
 
 struct bx_snapshot {
     u64 passes, operations, audits, boottime_ns, cpu_changes, churns, churn_failures;
@@ -137,19 +137,34 @@ static DEFINE_PER_CPU(u64, hook_skips);
 static bool hook_ready;   /* release/acquire: publishes every CPU's probe */
 /* 0 none, 1 recording, 2 recorded (record mode), 3 trapped (cpu and site only) */
 static atomic_t hook_failed = ATOMIC_INIT(0);
-static struct { int cpu; char site[32]; struct bx_probe probe; } hook_failure;
+static struct { int cpu; char site[48]; struct bx_probe probe; } hook_failure;
+
+/* The site goes into the status JSON and the console record: keep it to one
+ * printable token (a caller may pass any string, not only __func__). */
+static void copy_site(char *dst, size_t size, const char *site)
+{
+    size_t i;
+    if (!site)
+        site = "?";
+    for (i = 0; i + 1 < size && site[i]; ++i)
+        dst[i] = site[i] == '"' || site[i] == '\\' || site[i] <= ' ' || site[i] > '~' ?
+                 '?' : site[i];
+    dst[i] = '\0';
+}
 
 static void hook_fail(struct bx_hook_cpu *h, const char *site)
 {
+    char name[sizeof(hook_failure.site)];
     int cpu = smp_processor_id();
+    copy_site(name, sizeof(name), site);
     if (atomic_cmpxchg(&hook_failed, 0, 1) == 0) {
         hook_failure.cpu = cpu;
-        strscpy(hook_failure.site, site ? site : "?", sizeof(hook_failure.site));
+        memcpy(hook_failure.site, name, sizeof(name));
         hook_failure.probe = h->probe;
         atomic_set_release(&hook_failed, 2);
     }
     if (atomic_cmpxchg(&abort_run, 0, 1) == 0) {
-        pr_err("bitoxin: hook failure site=%s cpu=%d\n", site ? site : "?", cpu);
+        pr_err("bitoxin: hook failure site=%s cpu=%d\n", name, cpu);
         report("hook_cpu", (unsigned int)cpu, &h->probe);
     }
 }
@@ -165,7 +180,7 @@ void bitoxin_probe_point(const char *site)
     }
     this_cpu_inc(hook_calls);
     WRITE_ONCE(h->site, site);
-    if (bx_run(&h->probe, hook_budget) != BX_OK)
+    if (bx_run(&h->probe, hook_ops) != BX_OK)
         hook_fail(h, site);
     WRITE_ONCE(h->site, NULL);
     atomic_set(&h->busy, 0);
@@ -212,7 +227,10 @@ static unsigned long reg_at(struct pt_regs *regs, int n)
 #if defined(__aarch64__)
     return n >= 0 && n < 31 ? regs->regs[n] : 0;
 #elif defined(__riscv)
-    return n > 0 && n < 32 ? ((unsigned long *)regs)[n] : 0; /* slot n is x<n> */
+    /* pt_regs starts epc, ra, sp, ...: slot n is x<n> (x0 slot holds epc). */
+    BUILD_BUG_ON(offsetof(struct pt_regs, a0) != 10 * sizeof(long));
+    BUILD_BUG_ON(offsetof(struct pt_regs, t6) != 31 * sizeof(long));
+    return n > 0 && n < 32 ? ((unsigned long *)regs)[n] : 0;
 #else
     (void)regs; (void)n;
     return 0;
@@ -239,7 +257,14 @@ static bool is_bitoxin_trap(unsigned long pc)
 
 /* Lane traps (kinds 1, 2): A = token, C = check word, bit = the visited bit.
  * C-detected traps (kinds 3, 4): A = expected, B = observed, C = bit. The
- * kernel has no FP/SIMD lane (kind 5). */
+ * kernel has no FP/SIMD lane (kind 5).
+ *
+ * The trap is a deliberate oops: the trapping task dies (a worker leaves its
+ * slot "trapped"; unload still works) or, in IRQ context, the kernel panics.
+ * On arm64 6.1 a worker that dies in the EL1 debug handler also leaves a
+ * one-time context-tracking WARNING (ct_kernel_exit, after "exited with irqs
+ * disabled") and taints the kernel (D, W). That is inherent to dying there,
+ * not a second failure: reboot before a further campaign. */
 static int bx_die(struct notifier_block *nb, unsigned long val, void *data)
 {
     static const char *const kinds[] = { "none", "register", "memory", "data", "state" };
@@ -247,23 +272,29 @@ static int bx_die(struct notifier_block *nb, unsigned long val, void *data)
     struct pt_regs *regs = args ? args->regs : NULL;
     struct bx_hook_cpu *h;
     const struct bx_probe *p = NULL;
-    const char *site;
-    char who[64] = "unknown";
+    char site[sizeof(hook_failure.site)], who[sizeof(site) + 16] = "unknown";
     u64 kind, a, b, c, chain[BX_LANE_MAX], expected = 0, observed = 0;
     unsigned int i;
     int index = -1, cpu = raw_smp_processor_id();
-    (void)nb; (void)val;
-    if (!regs || !is_bitoxin_trap(instruction_pointer(regs)))
+    (void)nb;
+    /* DIE_OOPS only: RISC-V KGDB builds notify DIE_TRAP for the same trap
+     * first, and attributing it twice would find busy == 2 the second time. */
+    if (val != DIE_OOPS || !regs || !is_bitoxin_trap(instruction_pointer(regs)))
         return NOTIFY_DONE;
     atomic_set(&abort_run, 1);   /* the first failure latches globally */
     h = raw_cpu_ptr(&hook_cpu);
-    site = READ_ONCE(h->site);
-    if (atomic_read(&h->busy) && site) {
+    /* busy == 1 only while a hook call runs on this CPU: preemption is off
+     * there, so a worker cannot trap on this CPU in between. A hook call that
+     * trapped never clears busy; 2 marks it dead, so a later worker trap on
+     * this CPU is not taken for the hook. */
+    if (atomic_read(&h->busy) == 1) {
+        copy_site(site, sizeof(site), READ_ONCE(h->site));
         snprintf(who, sizeof(who), "hook site=%s", site);
         p = &h->probe;
+        atomic_set(&h->busy, 2);
         if (atomic_cmpxchg(&hook_failed, 0, 1) == 0) {
             hook_failure.cpu = cpu;
-            strscpy(hook_failure.site, site, sizeof(hook_failure.site));
+            memcpy(hook_failure.site, site, sizeof(site));
             atomic_set_release(&hook_failed, 3);
         }
     } else {
@@ -274,7 +305,7 @@ static int bx_die(struct notifier_block *nb, unsigned long val, void *data)
                 atomic_set(&workers[i].trapped, 1);
             }
     }
-    /* One record; RISC-V KGDB builds also notify DIE_TRAP before DIE_OOPS. */
+    /* One record: the first trap; others are marked above but not printed. */
     if (atomic_xchg(&trap_reported, 1))
         return NOTIFY_DONE;
     kind = reg_at(regs, bx_trap_regno(BX_TRAP_REG_KIND));
@@ -457,7 +488,7 @@ static int status_show(struct seq_file *s, void *unused)
             skips += per_cpu(hook_skips, cpu);
         }
         seq_printf(s, ",\"hook\":{\"budget\":%u,\"calls\":%llu,\"nested_skips\":%llu,\"failed\":%s",
-                   hook_budget, calls, skips, yes(failed));
+                   hook_ops, calls, skips, yes(failed));
         if (failed == 2) {
             const struct bx_probe *p = &hook_failure.probe;
             seq_printf(s, ",\"cpu\":%d,\"site\":\"%s\",\"error\":\"%s\",\"error_bit\":%u,\"expected\":\"%016llx\",\"observed\":\"%016llx\",\"lane_reg\":\"%s\",\"lane_expected\":\"%016llx\",\"lane_observed\":\"%016llx\"",
@@ -547,9 +578,10 @@ static int __init bitoxin_init(void)
     if ((!per_cpu && threads > BX_MAX_WORKERS) || mem_kib > BX_MAX_BYTES / 1024 ||
         (mem_kib & (mem_kib - 1)) || !seed || (mem_kib && seed >= mem_kib * 8192U) ||
         !chunk || chunk > 65536 || pause_ms > 1000 || !lane_rounds ||
-        lane_rounds > BX_MAX_ROUNDS || !hook_budget || hook_budget > 65536 ||
-        (u64)chunk * lane_rounds > (1U << 24) || (u64)hook_budget * lane_rounds > (1U << 16))
+        lane_rounds > BX_MAX_ROUNDS || (u64)chunk * lane_rounds > (1U << 24) ||
+        (u64)hook_budget * lane_rounds > (1U << 16))
         return -EINVAL;
+    hook_ops = hook_budget ? hook_budget : min(4096U, (1U << 16) / lane_rounds);
     nworkers = threads;
     if (per_cpu) {
         nworkers = 0;
@@ -585,15 +617,16 @@ static int __init bitoxin_init(void)
         }
         publish(w, "ready");
     }
-    err = setup_hook();
-    if (err)
-        goto fail;
+    /* Before setup_hook() publishes hook_ready: a hook call may trap at once. */
     if (trap) {
         err = register_die_notifier(&die_notifier);
         if (err)
             goto fail;
         die_registered = true;
     }
+    err = setup_hook();
+    if (err)
+        goto fail;
     err = register_pm_notifier(&pm_notifier);
     if (err)
         goto fail;
@@ -623,9 +656,9 @@ static int __init bitoxin_init(void)
     }
     for (i = 0; i < nworkers; ++i)
         wake_up_process(workers[i].task);
-    pr_info("bitoxin: started backend=%s workers=%u mem_kib=%u passes=%llu freezable=%u trap=%u lane_rounds=%u churn=%u per_cpu=%u panic_on_error=%u\n",
+    pr_info("bitoxin: started backend=%s workers=%u mem_kib=%u passes=%llu freezable=%u trap=%u lane_rounds=%u hook_budget=%u churn=%u per_cpu=%u panic_on_error=%u\n",
             bx_backend_name(), nworkers, effective_kib, passes, freezable, trap,
-            lane_rounds, churn, per_cpu, panic_on_error);
+            lane_rounds, hook_ops, churn, per_cpu, panic_on_error);
     return 0;
 fail_notifier:
     unregister_pm_notifier(&pm_notifier);
