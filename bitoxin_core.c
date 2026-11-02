@@ -163,8 +163,11 @@ int bx_run(struct bx_probe *p, bx_u32 budget)
         } else {
             bx_u8 want = p->expected ? 0 : 0xff;
             bx_u8 got;
+            bx_u32 lfsr = *(volatile bx_u32 *)&p->lfsr;
             if (p->walked != p->bits || p->verified >= p->bytes)
                 return fail(p, BX_STATE_ERROR, 0, p->bytes - 1, p->verified);
+            if (lfsr != p->seed) /* the closing walk step left it there */
+                return fail(p, BX_STATE_ERROR, 0, p->seed, lfsr);
             got = p->buffer[p->verified];
             if (got != want)
                 return fail(p, BX_DATA_ERROR, p->verified * 8U, want, got);
@@ -192,6 +195,8 @@ int bx_rebind(struct bx_probe *p, volatile bx_u8 *buffer)
         return BX_BAD_CONFIG;
     if (p->error.code != BX_OK)
         return p->error.code;
+    if (!valid_state(p)) /* a corrupted size would overrun the new buffer */
+        return fail(p, BX_STATE_ERROR, 0, 0, p->lfsr);
     if (p->phase != BX_WALK || p->walked || p->verified || p->lfsr != p->seed)
         return BX_BAD_CONFIG;
     fill = p->expected ? 0xff : 0x00;

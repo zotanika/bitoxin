@@ -119,6 +119,25 @@ int main(void)
     assert(bx_rebind(&p, a) == BX_BAD_CONFIG);
     assert(bx_rebind(&p, NULL) == BX_BAD_CONFIG);
     puts("PASS rebind at pass boundaries only");
+
+    /* A corrupted size is a state error, not an overrun of the new buffer. */
+    assert(bx_init(&p, a, 512, 9) == BX_OK);
+    until_pass(&p, 1, 4096);
+    memset(b, 0x5a, sizeof(b));
+    p.bytes *= 2U;
+    assert(bx_rebind(&p, b) == BX_STATE_ERROR);
+    assert(p.error.code == BX_STATE_ERROR && p.buffer == a);
+    for (i = 0; i < sizeof(b); ++i) assert(b[i] == 0x5a);
+    puts("PASS rebind validates the probe before writing");
+
+    /* The closing walk step leaves lfsr == seed for the whole verify phase. */
+    assert(bx_init(&p, a, 64, 1) == BX_OK);
+    assert(bx_run(&p, 512 + 3) == BX_OK);
+    assert(p.phase == BX_VERIFY && p.verified == 3);
+    p.lfsr = 2;
+    assert(bx_run(&p, 1) == BX_STATE_ERROR && p.verified == 3);
+    assert(p.error.phase == BX_VERIFY && p.error.expected == 1 && p.error.observed == 2);
+    puts("PASS verify rejects a moved traversal state");
     puts("ALL CORE TESTS PASSED");
     return 0;
 }
