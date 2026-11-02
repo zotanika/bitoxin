@@ -37,7 +37,9 @@ struct bx_error {
 };
 struct bx_probe {
     volatile bx_u8 *buffer;
-    bx_u32 bytes, bits, seed, lfsr, taps, walked, verified, cursor, rounds;
+    bx_u32 bytes, bits, seed, lfsr, taps, walked, verified;
+    bx_u32 cursor;           /* last visited bit index, read by trap decoders */
+    bx_u32 rounds;
     bx_u8 expected, trap;
     enum bx_phase phase;
     bx_u64 passes, operations, audits;

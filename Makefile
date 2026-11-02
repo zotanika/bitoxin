@@ -18,10 +18,13 @@ $(BUILD)/test-portable: tests/test_core.c bitoxin_core.c $(LANE) | $(BUILD)
 	$(CC) $(CFLAGS) $(WARN) -DBX_PORTABLE -I. tests/test_core.c bitoxin_core.c -o $@
 $(BUILD)/test-lfsr: tests/test_lfsr.c bitoxin_core.c $(LANE) | $(BUILD)
 	$(CC) $(CFLAGS) $(WARN) -I. tests/test_lfsr.c bitoxin_core.c -o $@
-test: $(BUILD)/test-core $(BUILD)/test-portable $(BUILD)/test-lfsr $(BUILD)/bitoxin-run
+$(BUILD)/test-midrun: tests/test_midrun.c bitoxin_core.c $(LANE) | $(BUILD)
+	$(CC) $(CFLAGS) $(WARN) -I. tests/test_midrun.c -o $@
+test: $(BUILD)/test-core $(BUILD)/test-portable $(BUILD)/test-lfsr $(BUILD)/test-midrun $(BUILD)/bitoxin-run
 	$(BUILD)/test-core
 	$(BUILD)/test-portable
 	$(BUILD)/test-lfsr
+	$(BUILD)/test-midrun
 	BITOXIN_RUNNER=$(abspath $(BUILD)/bitoxin-run) $(PYTHON) tests/test_runner.py
 	CC="$(CC)" $(PYTHON) tests/test_codegen.py
 sanitize:

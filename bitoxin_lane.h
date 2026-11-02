@@ -55,7 +55,7 @@ static inline bx_u64 bx_a64_step(unsigned k, bx_u64 v)
     case 15: return v + 0x3c5U;
     case 16: return bx_ror64(v, 23);
     case 21: return v - 0x7b1U;
-    default: return bx_ror64(v, 47);
+    case 22: default: return bx_ror64(v, 47);
     }
 }
 

@@ -31,14 +31,19 @@ static void check_lane(bx_u64 input)
 {
     bx_u64 snapshot[BX_LANE_MAX];
     bx_u32 status = 99;
-    /* Bit 0 of the token is checked against expected (bit 8 of the check word). */
-    bx_u64 check = (bx_u64)(input & 1U) << 8;
-    assert(bx_lane(input, check, 1, snapshot, &status) == input);
+    /* Token bit pos (low byte) is checked against expected (bit 8 of the check word). */
+    for (unsigned pos = 0; pos < 8; ++pos) {
+        bx_u64 check = pos | (((input >> pos) & 1U) << 8);
+        status = 99;
+        assert(bx_lane(input, check, 1, snapshot, &status) == input);
+        assert(status == BX_LANE_OK);
+        status = 99;
+        assert(bx_lane(input, check ^ 0x100U, 1, snapshot, &status) == input);
+        assert(status == BX_LANE_MEMORY);
+    }
+    status = 99;
+    assert(bx_lane(input, (input & 1U) << 8, 3, snapshot, &status) == input);
     assert(status == BX_LANE_OK);
-    assert(bx_lane(input, check, 3, snapshot, &status) == input);
-    assert(status == BX_LANE_OK);
-    assert(bx_lane(input, check ^ 0x100U, 1, snapshot, &status) == input);
-    assert(status == BX_LANE_MEMORY);
 }
 
 int main(void)

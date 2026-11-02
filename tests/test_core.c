@@ -94,7 +94,7 @@ int main(void)
     assert(bx_init(NULL, a, 64, 1) == BX_BAD_CONFIG);
     puts("PASS invalid sizes, seeds and pointers rejected");
 
-    /* Traversal state lives in memory: a corrupted tap mask derails the walk. */
+    /* A corrupted tap mask is rejected. */
     assert(bx_init(&p, a, 512, 1) == BX_OK);
     assert(bx_run(&p, 100) == BX_OK);
     p.taps ^= 0x40U;

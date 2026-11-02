@@ -51,8 +51,9 @@ static inline bx_u64 bx_lane(bx_u64 token, bx_u64 check, bx_u32 rounds,
             *status = BX_LANE_REGISTER;
             if (!snapshot)
                 bx_trap_now(BX_LANE_REGISTER, token, 0, check);
-            for (k = 0; k < BX_LANE_REGS; ++k)
-                snapshot[k] = regs[k];
+            else
+                for (k = 0; k < BX_LANE_REGS; ++k)
+                    snapshot[k] = regs[k];
             return v;
         }
     }

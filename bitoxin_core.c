@@ -10,6 +10,7 @@
 static const char *const lane_names[BX_LANE_REGS] = BX_LANE_NAMES;
 static const signed char lane_regnos[BX_LANE_REGS] = BX_LANE_REGNOS;
 static const signed char trap_regnos[4] = BX_TRAP_REGNOS;
+_Static_assert(BX_LANE_REGS <= BX_LANE_MAX, "lane snapshot too small");
 
 /* Right-shift Galois masks, degrees 9..30; original lfsrtabs.h convention.
  * Degree 14 corrects the legacy 0x201d mask. Every mask's order is tested. */
@@ -116,8 +117,8 @@ int bx_run(struct bx_probe *p, bx_u32 budget)
                     return fail(p, BX_STATE_ERROR, 0, p->seed, lfsr);
                 index = 0; /* Zero is outside the LFSR cycle, inside the test. */
             } else {
-                bx_u32 taps = *(volatile bx_u32 *)&p->taps;
-                lfsr = (lfsr >> 1) ^ ((0U - (lfsr & 1U)) & taps);
+                bx_u32 feedback = *(volatile bx_u32 *)&p->taps;
+                lfsr = (lfsr >> 1) ^ ((0U - (lfsr & 1U)) & feedback);
                 if (!lfsr || lfsr >= p->bits)
                     return fail(p, BX_STATE_ERROR, 0, p->bits, lfsr);
                 *(volatile bx_u32 *)&p->lfsr = lfsr;
