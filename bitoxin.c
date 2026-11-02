@@ -32,7 +32,7 @@ MODULE_PARM_DESC(mem_kib, "Power-of-two KiB per worker, 0 = largest that allocat
 module_param(seed, uint, 0444);
 MODULE_PARM_DESC(seed, "Nonzero first-worker seed, smaller than buffer bit count");
 module_param(chunk, uint, 0444);
-MODULE_PARM_DESC(chunk, "Operations between stop/freezer/status checks (1..65536)");
+MODULE_PARM_DESC(chunk, "Operations between stop/freezer/status checks (1..65536); a chunk has no scheduling point, so chunk * lane_rounds <= 16777216");
 module_param(pause_ms, uint, 0444);
 MODULE_PARM_DESC(pause_ms, "Optional interruptible pause per chunk (0..1000 ms)");
 module_param(passes, ullong, 0444);
@@ -44,9 +44,9 @@ MODULE_PARM_DESC(panic_on_error, "Panic after logging the first probe failure (d
 module_param(trap, bool, 0444);
 MODULE_PARM_DESC(trap, "Trap in place (brk/ebreak) on any failure with chain registers live");
 module_param(lane_rounds, uint, 0444);
-MODULE_PARM_DESC(lane_rounds, "Register-chain repetitions per operation (1..65536)");
+MODULE_PARM_DESC(lane_rounds, "Register-chain repetitions per operation (1..65536); chunk * lane_rounds <= 16777216");
 module_param(churn, bool, 0444);
-MODULE_PARM_DESC(churn, "Replace each worker buffer with a fresh vmalloc at verified pass boundaries");
+MODULE_PARM_DESC(churn, "Replace each worker buffer with a fresh vmalloc at verified pass boundaries; the next buffer is allocated before the old is freed, so with mem_kib=0 most churns may fail (counted; no OOM kill)");
 module_param(per_cpu, bool, 0444);
 MODULE_PARM_DESC(per_cpu, "One worker per online CPU, re-pinned to its home CPU after hotplug");
 module_param(hook_budget, uint, 0444);
@@ -64,6 +64,7 @@ struct bx_worker {
     struct task_struct *task;
     struct bx_probe probe;
     u8 *buffer;
+    u8 *pending;            /* churn: the next buffer while bx_rebind() runs */
     size_t size;
     unsigned int id;
     int home_cpu, cpu, seen_resume;
@@ -121,11 +122,17 @@ static const char *fail_worker(struct bx_worker *w)
 static int churn_buffer(struct bx_worker *w)
 {
     u8 *next = __vmalloc(w->size, BX_GFP);
+    int err;
     if (!next) {
         ++w->churn_failures;
         return BX_OK;
     }
-    if (bx_rebind(&w->probe, next) != BX_OK) {
+    /* In trap mode corruption found by bx_rebind() oopses there instead of
+     * returning; release_workers() then frees the pending buffer. */
+    WRITE_ONCE(w->pending, next);
+    err = bx_rebind(&w->probe, next);
+    WRITE_ONCE(w->pending, NULL);
+    if (err != BX_OK) {
         vfree(next);
         if (w->probe.error.code != BX_OK)
             return w->probe.error.code;
@@ -266,9 +273,13 @@ static const struct file_operations status_fops = {
 static int allocate_buffers(void)
 {
     unsigned int kib = mem_kib, i;
+    if (!nworkers) {   /* hook only */
+        effective_kib = 0;
+        return 0;
+    }
     if (!kib) {
         kib = BX_MAX_BYTES / 1024;
-        while (nworkers && (u64)kib * nworkers > 256U * 1024U)
+        while ((u64)kib * nworkers > 256U * 1024U)
             kib >>= 1;
     }
     for (;;) {
@@ -302,8 +313,10 @@ static void release_workers(void)
             kthread_stop(workers[i].task);      /* also valid after a worker oops */
             put_task_struct(workers[i].task);
         }
-    for (i = 0; i < nworkers; ++i)
+    for (i = 0; i < nworkers; ++i) {
         vfree(workers[i].buffer);
+        vfree(workers[i].pending);   /* left by an oops inside bx_rebind() */
+    }
     kfree(workers);
     workers = NULL;
 }
@@ -313,10 +326,13 @@ static int __init bitoxin_init(void)
     unsigned int i, cpu;
     int err;
     struct dentry *status;
-    if (threads > BX_MAX_WORKERS || mem_kib > BX_MAX_BYTES / 1024 ||
+    /* A chunk has no scheduling point and both target kernels are
+     * PREEMPT_VOLUNTARY: the last test bounds its lane work (soft lockups). */
+    if ((!per_cpu && threads > BX_MAX_WORKERS) || mem_kib > BX_MAX_BYTES / 1024 ||
         (mem_kib & (mem_kib - 1)) || !seed || (mem_kib && seed >= mem_kib * 8192U) ||
         !chunk || chunk > 65536 || pause_ms > 1000 || !lane_rounds ||
-        lane_rounds > BX_MAX_ROUNDS || !hook_budget || hook_budget > 65536)
+        lane_rounds > BX_MAX_ROUNDS || !hook_budget || hook_budget > 65536 ||
+        (u64)chunk * lane_rounds > (1U << 24))
         return -EINVAL;
     nworkers = threads;
     if (per_cpu) {
