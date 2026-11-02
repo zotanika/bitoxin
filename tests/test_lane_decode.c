@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* Built with -DBX_LANE_FAULT=k (or -DBX_SIMD -DBX_SIMD_FAULT=k): the record
+/* Built with -DBX_LANE_FAULT=k (or -DBX_SIMD -DBX_SIMD_FAULT=k, optionally
+ * -DBX_SIMD_FAULT_HALF=1 for a single-bit fault in the high half): the record
  * snapshot must decode to position k before any test memory changes. Without a
  * fault it runs two clean passes and prints the GPR chain length. */
 #include "bitoxin_core.h"
@@ -10,6 +11,9 @@
 #endif
 #ifndef BX_SIMD_FAULT
 #define BX_SIMD_FAULT -1
+#endif
+#ifndef BX_SIMD_FAULT_HALF
+#define BX_SIMD_FAULT_HALF 0
 #endif
 
 int main(void)
@@ -34,6 +38,8 @@ int main(void)
         if (BX_SIMD_FAULT >= 0) {
             assert(p.error.lane_simd && p.error.lane_index == BX_SIMD_FAULT);
             assert(p.error.lane_expected != p.error.lane_observed);
+            assert(!BX_SIMD_FAULT_HALF ||
+                   (p.error.lane_expected ^ p.error.lane_observed) == 1U);
         } else
 #endif
         {

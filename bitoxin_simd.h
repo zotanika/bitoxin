@@ -60,19 +60,37 @@ static inline struct bx_v128 bx_v128_dup(bx_u64 token)
     return v;
 }
 
+/* Test builds: BX_SIMD_FAULT=p flips register p+1 after it is produced (every
+ * bit; the sign on RISC-V F). BX_SIMD_FAULT_HALF=1 flips only bit 0 of its high
+ * 64 bits instead (RISC-V F has no high half: bit 0 instead of the sign). */
+#ifndef BX_SIMD_FAULT_HALF
+#define BX_SIMD_FAULT_HALF 0
+#endif
 #define BX_SIMD_F(p, r) ".if " BX_STR(BX_SIMD_FAULT) " == " #p "\n\t"
 
+/* bx_simd_lane(token, check, snapshot, status): the check word is not read; it
+ * is pinned in operand C so a kind-5 trap follows the lane trap convention. */
 #if defined(__aarch64__) && !defined(BX_PORTABLE)
 #define BX_SIMD_NAMES { "v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "v10", \
     "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21", \
     "v22", "v23", "v24", "v25", "v26", "v27", "v28", "v29", "v30" }
 #define BX_SIMD_SIGN_ONLY 0
-#define BX_N(p, op, r) op "\n\t" BX_SIMD_F(p, r) "not " r ".16b, " r ".16b\n\t.endif\n\t"
-static inline bx_u64 bx_simd_lane(bx_u64 token, bx_u64 *snapshot, bx_u32 *status)
+#define BX_SIMD_REGNO_BASE 1
+#if BX_SIMD_FAULT_HALF
+#define BX_N_FLIP(r) "umov x16, " r ".d[1]\n\teor x16, x16, #1\n\tins " r ".d[1], x16\n\t"
+#else
+#define BX_N_FLIP(r) "not " r ".16b, " r ".16b\n\t"
+#endif
+#define BX_N(p, op, r) op "\n\t" BX_SIMD_F(p, r) BX_N_FLIP(r) ".endif\n\t"
+/* Both halves of v30 are compared with the GPR token in x0, not with v0, so a
+ * faulty dup or a flipped v0 is caught as well. */
+static inline bx_u64 bx_simd_lane(bx_u64 token, bx_u64 check, bx_u64 *snapshot,
+                                  bx_u32 *status)
 {
     register bx_u64 x0 __asm__("x0") = token;
     register bx_u64 *x1 __asm__("x1") = snapshot;
     register bx_u64 x2 __asm__("x2") = 0;
+    register bx_u64 x3 __asm__("x3") = check;
     __asm__ volatile(
         "dup v0.2d, x0\n\t"
         BX_N(0, "not v1.16b, v0.16b", "v1")
@@ -105,8 +123,8 @@ static inline bx_u64 bx_simd_lane(bx_u64 token, bx_u64 *snapshot, bx_u32 *status
         BX_N(27, "rev64 v28.16b, v27.16b", "v28")
         BX_N(28, "ext v29.16b, v28.16b, v28.16b, #13", "v29")
         BX_N(29, "not v30.16b, v29.16b", "v30")
-        "eor v31.16b, v30.16b, v0.16b\n\t"
-        "umov x16, v31.d[0]\n\t" "umov x17, v31.d[1]\n\t" "orr x16, x16, x17\n\t"
+        "umov x16, v30.d[0]\n\t" "umov x17, v30.d[1]\n\t"
+        "eor x16, x16, x0\n\t" "eor x17, x17, x0\n\t" "orr x16, x16, x17\n\t"
         "cbnz x16, 9f\n\t" "umov x0, v30.d[0]\n\t" "b 7f\n"
         "9:\n\t" "mov x2, #5\n\t" "cbz x1, 5f\n\t"
         "st1 {v1.2d, v2.2d, v3.2d, v4.2d}, [x1], #64\n\t"
@@ -121,27 +139,36 @@ static inline bx_u64 bx_simd_lane(bx_u64 token, bx_u64 *snapshot, bx_u32 *status
         "5:\n\t" BX_A64_TRAP
         "7:\n"
         : "+r"(x0), "+r"(x1), "+r"(x2)
-        :
+        : "r"(x3)
         : "v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "v10", "v11",
           "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21", "v22",
-          "v23", "v24", "v25", "v26", "v27", "v28", "v29", "v30", "v31", "x16", "x17",
+          "v23", "v24", "v25", "v26", "v27", "v28", "v29", "v30", "x16", "x17",
           "cc", "memory");
     *status = (bx_u32)x2;
     return x0;
 }
-#elif defined(__riscv) && __riscv_xlen == 64 && !defined(BX_PORTABLE)
+#elif defined(__riscv) && __riscv_xlen == 64 && defined(__riscv_flen) && \
+    __riscv_flen >= 64 && !defined(BX_PORTABLE)
 #define BX_SIMD_NAMES { "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", \
     "f11", "f12", "f13", "f14", "f15", "f16", "f17", "f18", "f19", "f20", "f21", \
     "f22", "f23", "f24", "f25", "f26", "f27", "f28", "f29", "f30" }
 #define BX_SIMD_SIGN_ONLY 1
+#define BX_SIMD_REGNO_BASE 1
+#if BX_SIMD_FAULT_HALF
+#define BX_F_FLIP(d) "fmv.x.d t0, " d "\n\txori t0, t0, 1\n\tfmv.d.x " d ", t0\n\t"
+#else
+#define BX_F_FLIP(d) "fsgnjn.d " d ", " d ", " d "\n\t"
+#endif
 /* fsgnjn (sign negation) is a non-arithmetic move: no NaN canonicalisation. */
 #define BX_F(p, d, s) "fsgnjn.d " d ", " s ", " s "\n\t" BX_SIMD_F(p, d) \
-    "fsgnjn.d " d ", " d ", " d "\n\t.endif\n\t"
-static inline bx_u64 bx_simd_lane(bx_u64 token, bx_u64 *snapshot, bx_u32 *status)
+    BX_F_FLIP(d) ".endif\n\t"
+static inline bx_u64 bx_simd_lane(bx_u64 token, bx_u64 check, bx_u64 *snapshot,
+                                  bx_u32 *status)
 {
     register bx_u64 a0 __asm__("a0") = token;
     register bx_u64 *a1 __asm__("a1") = snapshot;
     register bx_u64 a2 __asm__("a2") = 0;
+    register bx_u64 a3 __asm__("a3") = check;
     /* s6: the marker word after ebreak decodes as auipc s6, 0 (see BX_RV_TRAP). */
     __asm__ volatile(
         "fmv.d.x f0, a0\n\t"
@@ -172,7 +199,7 @@ static inline bx_u64 bx_simd_lane(bx_u64 token, bx_u64 *snapshot, bx_u32 *status
         "5:\n\t" BX_RV_TRAP
         "7:\n"
         : "+r"(a0), "+r"(a1), "+r"(a2)
-        :
+        : "r"(a3)
         : "t0", "s6", "ft0", "ft1", "ft2", "ft3", "ft4", "ft5", "ft6", "ft7", "fs0",
           "fs1", "fa0", "fa1", "fa2", "fa3", "fa4", "fa5", "fa6", "fa7", "fs2", "fs3",
           "fs4", "fs5", "fs6", "fs7", "fs8", "fs9", "fs10", "fs11", "ft8", "ft9", "ft10",
@@ -185,14 +212,22 @@ static inline bx_u64 bx_simd_lane(bx_u64 token, bx_u64 *snapshot, bx_u32 *status
     "s11", "s12", "s13", "s14", "s15", "s16", "s17", "s18", "s19", "s20", "s21", \
     "s22", "s23", "s24", "s25", "s26", "s27", "s28", "s29", "s30" }
 #define BX_SIMD_SIGN_ONLY 0
-static inline bx_u64 bx_simd_lane(bx_u64 token, bx_u64 *snapshot, bx_u32 *status)
+#define BX_SIMD_REGNO_BASE -1
+static inline bx_u64 bx_simd_lane(bx_u64 token, bx_u64 check, bx_u64 *snapshot,
+                                  bx_u32 *status)
 {
     struct bx_v128 v = bx_v128_dup(token), regs[BX_SIMD_MAX];
-    unsigned p, i;
+    unsigned p;
     for (p = 0; p < BX_SIMD_MAX; ++p) {
         v = bx_neon_step(p + 1, v);
-        if ((int)p == BX_SIMD_FAULT)
+        if ((int)p == BX_SIMD_FAULT) {
+#if BX_SIMD_FAULT_HALF
+            v.b[8] ^= 1U; /* bit 0 of the high half */
+#else
+            unsigned i;
             for (i = 0; i < 16; ++i) v.b[i] = (bx_u8)~v.b[i];
+#endif
+        }
         regs[p] = v;
     }
     if (bx_v128_half(&v, 0) == token && bx_v128_half(&v, 1) == token) {
@@ -201,7 +236,7 @@ static inline bx_u64 bx_simd_lane(bx_u64 token, bx_u64 *snapshot, bx_u32 *status
     }
     *status = BX_LANE_SIMD;
     if (!snapshot)
-        bx_trap_now(BX_LANE_SIMD, token, 0, 0);
+        bx_trap_now(BX_LANE_SIMD, token, 0, check);
     for (p = 0; p < BX_SIMD_MAX; ++p) {
         snapshot[2 * p] = bx_v128_half(&regs[p], 0);
         snapshot[2 * p + 1] = bx_v128_half(&regs[p], 1);

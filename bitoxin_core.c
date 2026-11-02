@@ -127,7 +127,7 @@ int bx_run(struct bx_probe *p, bx_u32 budget)
         if (p->phase == BX_WALK) {
             bx_u32 index, lfsr, status, rounds;
             bx_u8 observed, mask;
-            bx_u64 token, carried;
+            bx_u64 token, check, carried;
             if (p->walked >= p->bits)
                 return fail(p, BX_STATE_ERROR, 0, p->bits - 1, p->walked);
             /* Traversal state is reloaded from memory every step (2018 design).
@@ -154,14 +154,16 @@ int bx_run(struct bx_probe *p, bx_u32 budget)
             /* Actual load in the low byte; varied upper bits exercise the GPRs.
              * The lane checks the bit and supplies the store. */
             token = (((bx_u64)index * 0x9e3779b97f4a7c15ULL) & ~0xffULL) | observed;
-            carried = bx_lane(token, (index & 7U) | ((bx_u64)p->expected << 8),
-                              rounds, p->trap ? NULL : p->lane_regs, &status);
+            check = (index & 7U) | ((bx_u64)p->expected << 8);
+            carried = bx_lane(token, check, rounds, p->trap ? NULL : p->lane_regs,
+                              &status);
             if (status == BX_LANE_MEMORY)
                 return fail(p, BX_DATA_ERROR, index, p->expected, !p->expected);
             if (status != BX_LANE_OK)
                 return lane_fail(p, index, token, carried);
 #ifdef BX_SIMD
-            carried = bx_simd_lane(carried, p->trap ? NULL : p->simd_regs, &status);
+            carried = bx_simd_lane(carried, check, p->trap ? NULL : p->simd_regs,
+                                   &status);
             if (status != BX_LANE_OK) {
                 p->error.lane_index = bx_simd_decode(token, p->simd_regs,
                     &p->error.lane_expected, &p->error.lane_observed);
@@ -370,12 +372,11 @@ const char *bx_simd_reg_name(int index)
 
 int bx_simd_regno(int index)
 {
-#if defined(BX_PORTABLE) || !(defined(__aarch64__) || \
-    (defined(__riscv) && __riscv_xlen == 64))
+#if BX_SIMD_REGNO_BASE < 0 /* portable mirror: no registers to name */
     (void)index;
     return -1;
 #else
-    return index >= 0 && index < BX_SIMD_MAX ? index + 1 : -1;
+    return index >= 0 && index < BX_SIMD_MAX ? index + BX_SIMD_REGNO_BASE : -1;
 #endif
 }
 #endif

@@ -46,14 +46,18 @@ struct bx_probe {
     struct bx_error error;
     bx_u64 lane_regs[BX_LANE_MAX];
 #ifdef BX_SIMD
+    /* BX_SIMD changes this layout: every translation unit linked together must
+     * agree on it. Position p: [2p] low 64 bits, [2p + 1] high 64 bits; the
+     * RISC-V F lane (64-bit registers) writes only [2p]. */
     bx_u64 simd_regs[BX_SIMD_MAX * 2];
 #endif
 };
 int bx_init(struct bx_probe *p, volatile bx_u8 *buffer, bx_u32 bytes, bx_u32 seed);
 int bx_set_lane(struct bx_probe *p, bx_u32 rounds, int trap);
-/* bx_run and bx_rebind never sleep; safe in the hook's preempt-disabled path. */
+/* Never sleeps; safe in the hook's preempt-disabled path. */
 int bx_run(struct bx_probe *p, bx_u32 budget);
-/* Only at a pass boundary; buffer must hold at least p->bytes. */
+/* Never sleeps but is O(bytes): workers only. Only at a pass boundary; buffer
+ * must hold at least p->bytes. */
 int bx_rebind(struct bx_probe *p, volatile bx_u8 *buffer);
 /* Kernel: may sleep and freeze; workers only, no locks held, never atomic
  * context (the BSP hook). A freeze in the middle does not restart the audit:

@@ -4,6 +4,8 @@
 A C equality guard can let the optimizer substitute the original input for the
 checked result. Track register data flow from the lane output to the byte store
 in the generated walk block. This checks architectural data dependence only.
+The -DBX_SIMD build (what bitoxin-run ships) stores the FP/SIMD lane output,
+so there the flow starts at that lane's result instead.
 """
 import os
 import platform
@@ -22,7 +24,10 @@ ABI = {'zero': 0, 'ra': 1, 'sp': 2, 'gp': 3, 'tp': 4, 't0': 5, 't1': 6, 't2': 7,
 A64_COND = ('eq', 'ne', 'cs', 'hs', 'cc', 'lo', 'mi', 'pl', 'vs', 'vc', 'hi', 'ls',
             'ge', 'lt', 'gt', 'le')
 CONFIG = {
-    'aarch64': dict(lane_end=r'^\s*mov\s+x0,\s*x28\s*$', result='x0',
+    'aarch64': dict(lane_end=r'^\s*mov\s+x0,\s*x28\s*$',
+                    # Apple clang prints umov x0, v30.d[0] as mov.d x0, v30[0].
+                    simd_lane_end=r'^\s*(?:umov|mov)(?:\.d)?\s+x0,\s*v30(?:\.d)?\[0\]\s*$',
+                    result='x0',
                     store={'strb', 'sturb', 'stlrb'},
                     exclusive=re.compile(r'stl?x[rp][bh]?$'),
                     other_store=re.compile(r'st'),
@@ -33,7 +38,9 @@ CONFIG = {
                     control={'cmp', 'cmn', 'tst', 'cbz', 'cbnz', 'tbz', 'tbnz',
                              *('b' + c for c in A64_COND)},
                     jump={'b'}, call={'bl', 'blr'}, caller_saved={*range(19), 30}),
-    'riscv64': dict(lane_end=r'^\s*mv\s+a0,\s*t6\s*$', result='a0', store={'sb'},
+    'riscv64': dict(lane_end=r'^\s*mv\s+a0,\s*t6\s*$',
+                    simd_lane_end=r'^\s*mv\s+a0,\s*t0\s*$',
+                    result='a0', store={'sb'}, abi=True,
                     exclusive=re.compile(r'sc\.[wd](?:\.(?:aq|rl|aqrl))?$'),
                     other_store=re.compile(r's[hwd]$'),
                     reg=re.compile(r'\b(' + '|'.join(sorted(ABI, key=len, reverse=True)) + r')\b'),
@@ -51,7 +58,7 @@ LABEL = re.compile(r'^([^\s:;#]+):')
 
 
 def register_ids(cfg, text):
-    if cfg is CONFIG['riscv64']:
+    if cfg.get('abi'):  # ABI register names (RISC-V)
         return {ABI[n] for n in cfg['reg'].findall(text)} - cfg['zero']
     return {int(n) for n in cfg['reg'].findall(text)}
 
@@ -132,14 +139,16 @@ class CodegenTest(unittest.TestCase):
     def test_lane_result_supplies_store_after_successful_check(self):
         compiler = shlex.split(os.environ.get('CC', 'cc'))
         with tempfile.TemporaryDirectory(prefix='bitoxin-codegen-') as directory:
-            for optimization in ['-O2', '-O3']:
-                with self.subTest(optimization=optimization):
-                    target = Path(directory) / 'core.s'
-                    subprocess.run([*compiler, '-std=c11', optimization, '-S',
-                                    '-I' + str(ROOT), str(ROOT / 'bitoxin_core.c'),
-                                    '-o', str(target)], check=True)
-                    self.assertTrue(stored_value_depends_on_lane(CONFIG[ARCH], target.read_text()),
-                                    'byte store bypasses the checked register-chain result')
+            for defines, lane_end in [([], 'lane_end'), (['-DBX_SIMD'], 'simd_lane_end')]:
+                cfg = dict(CONFIG[ARCH], lane_end=CONFIG[ARCH][lane_end])
+                for optimization in ['-O2', '-O3']:
+                    with self.subTest(optimization=optimization, defines=defines):
+                        target = Path(directory) / 'core.s'
+                        subprocess.run([*compiler, '-std=c11', optimization, *defines, '-S',
+                                        '-I' + str(ROOT), str(ROOT / 'bitoxin_core.c'),
+                                        '-o', str(target)], check=True)
+                        self.assertTrue(stored_value_depends_on_lane(cfg, target.read_text()),
+                                        'byte store bypasses the checked chain result')
 
 
 if __name__ == '__main__':
