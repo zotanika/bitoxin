@@ -52,6 +52,7 @@ struct bx_probe {
 int bx_init(struct bx_probe *p, volatile bx_u8 *buffer, bx_u32 bytes, bx_u32 seed);
 int bx_set_lane(struct bx_probe *p, bx_u32 rounds, int trap);
 int bx_run(struct bx_probe *p, bx_u32 budget);
+int bx_audit(struct bx_probe *p);
 const char *bx_result_name(enum bx_result code);
 const char *bx_backend_name(void);
 int bx_lane_count(void);

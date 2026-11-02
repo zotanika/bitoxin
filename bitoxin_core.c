@@ -34,6 +34,17 @@ static int valid_size(bx_u32 bytes)
            (bytes & (bytes - 1)) == 0;
 }
 
+static int valid_state(const struct bx_probe *p)
+{
+    return p->buffer && valid_size(p->bytes) && p->bits == p->bytes * 8U &&
+           p->taps == mask_for(p->bytes) && p->seed && p->seed < p->bits &&
+           p->lfsr && p->lfsr < p->bits && p->expected <= 1 &&
+           (p->phase == BX_WALK || p->phase == BX_VERIFY) &&
+           p->walked <= p->bits && p->verified <= p->bytes &&
+           !(p->phase == BX_WALK && p->verified != 0) &&
+           p->rounds && p->rounds <= BX_MAX_ROUNDS && p->trap <= 1;
+}
+
 static int fail(struct bx_probe *p, enum bx_result code, bx_u32 bit,
                 bx_u64 expected, bx_u64 observed)
 {
@@ -94,13 +105,7 @@ int bx_run(struct bx_probe *p, bx_u32 budget)
 {
     if (!p) return BX_BAD_CONFIG;
     if (p->error.code != BX_OK) return p->error.code;
-    if (!p->buffer || !valid_size(p->bytes) || p->bits != p->bytes * 8U ||
-        p->taps != mask_for(p->bytes) || !p->seed || p->seed >= p->bits ||
-        !p->lfsr || p->lfsr >= p->bits || p->expected > 1 ||
-        !p->rounds || p->rounds > BX_MAX_ROUNDS || p->trap > 1 ||
-        (p->phase != BX_WALK && p->phase != BX_VERIFY) ||
-        p->walked > p->bits || p->verified > p->bytes ||
-        (p->phase == BX_WALK && p->verified != 0))
+    if (!valid_state(p))
         return fail(p, BX_STATE_ERROR, 0, 0, p->lfsr);
 
     while (budget--) {
@@ -163,6 +168,50 @@ int bx_run(struct bx_probe *p, bx_u32 budget)
             }
         }
     }
+    return BX_OK;
+}
+
+static unsigned popcount8(bx_u8 v)
+{
+    unsigned n = 0;
+    while (v) { v &= (bx_u8)(v - 1U); ++n; }
+    return n;
+}
+
+/* Check the whole retained state without changing it. Replaying the walk proves
+ * every visited bit is flipped; counting flipped bits then proves no unvisited
+ * bit is. O(walked + bytes) time, no extra memory. */
+int bx_audit(struct bx_probe *p)
+{
+    bx_u32 i, lfsr, flipped = 0;
+    bx_u8 visited;
+    if (!p) return BX_BAD_CONFIG;
+    if (p->error.code != BX_OK) return p->error.code;
+    if (!valid_state(p))
+        return fail(p, BX_STATE_ERROR, 0, 0, p->lfsr);
+    visited = p->expected ? 0U : 1U;
+    if (p->phase == BX_VERIFY) {
+        bx_u8 want = p->expected ? 0 : 0xff;
+        for (i = 0; i < p->bytes; ++i) {
+            bx_u8 got = p->buffer[i]; /* report the byte that was compared */
+            if (got != want)
+                return fail(p, BX_DATA_ERROR, i * 8U, want, got);
+        }
+    } else {
+        lfsr = p->seed;
+        for (i = 0; i < p->walked; ++i) { /* walked < bits here: no zero step */
+            lfsr = (lfsr >> 1) ^ ((0U - (lfsr & 1U)) & p->taps);
+            if (((p->buffer[lfsr >> 3] >> (lfsr & 7U)) & 1U) != visited)
+                return fail(p, BX_DATA_ERROR, lfsr, visited, !visited);
+        }
+        if (lfsr != p->lfsr)
+            return fail(p, BX_STATE_ERROR, 0, lfsr, p->lfsr);
+        for (i = 0; i < p->bytes; ++i)
+            flipped += popcount8(p->expected ? (bx_u8)~p->buffer[i] : p->buffer[i]);
+        if (flipped != p->walked)
+            return fail(p, BX_DATA_ERROR, BX_AUDIT_UNLOCATED, p->walked, flipped);
+    }
+    ++p->audits;
     return BX_OK;
 }
 
