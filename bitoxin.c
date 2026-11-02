@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* BITOXIN 2: a preemptible state-integrity probe alongside external QA scenarios. */
+#define BITOXIN_PROBES   /* declare bitoxin_probe_point() for W=1 */
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/kthread.h>
@@ -16,7 +17,11 @@
 #include <linux/cpumask.h>
 #include <linux/sched.h>
 #include <linux/sched/task.h>
+#include <linux/percpu.h>
+#include <linux/rcupdate.h>
+#include <linux/string.h>
 #include "bitoxin_core.h"
+#include "bitoxin_hook.h"
 
 #define BX_MAX_WORKERS 32
 /* Large probe buffers must fail, not wake the OOM killer, when memory is short. */
@@ -44,13 +49,13 @@ MODULE_PARM_DESC(panic_on_error, "Panic after logging the first probe failure (d
 module_param(trap, bool, 0444);
 MODULE_PARM_DESC(trap, "Trap in place (brk/ebreak) on any failure with chain registers live");
 module_param(lane_rounds, uint, 0444);
-MODULE_PARM_DESC(lane_rounds, "Register-chain repetitions per operation (1..65536); chunk * lane_rounds <= 16777216");
+MODULE_PARM_DESC(lane_rounds, "Register-chain repetitions per operation (1..65536); chunk * lane_rounds <= 16777216, hook_budget * lane_rounds <= 65536");
 module_param(churn, bool, 0444);
 MODULE_PARM_DESC(churn, "Replace each worker buffer with a fresh vmalloc at verified pass boundaries; the next buffer is allocated before the old is freed, so with mem_kib=0 most churns may fail (counted; no OOM kill)");
 module_param(per_cpu, bool, 0444);
 MODULE_PARM_DESC(per_cpu, "One worker per online CPU, re-pinned to its home CPU after hotplug");
 module_param(hook_budget, uint, 0444);
-MODULE_PARM_DESC(hook_budget, "Operations per bitoxin_probe_point() call (1..65536)");
+MODULE_PARM_DESC(hook_budget, "Operations per bitoxin_probe_point() call (1..65536); the call runs with preemption disabled, so hook_budget * lane_rounds <= 65536");
 
 struct bx_snapshot {
     u64 passes, operations, audits, boottime_ns, cpu_changes, churns, churn_failures;
@@ -112,6 +117,83 @@ static const char *fail_worker(struct bx_worker *w)
     if (atomic_cmpxchg(&abort_run, 0, 1) == 0)
         report("worker", w->id, &w->probe);
     return "failed";
+}
+
+/* BSP hook: per-CPU retained state; each call continues that CPU's probe. */
+#define BX_HOOK_BYTES 512U
+struct bx_hook_cpu {
+    struct bx_probe probe;
+    u8 *buffer;            /* kmalloc: linear map, unlike the vmalloc workers */
+    atomic_t busy;
+    const char *site;
+};
+static DEFINE_PER_CPU(struct bx_hook_cpu, hook_cpu);
+static DEFINE_PER_CPU(u64, hook_calls);
+static DEFINE_PER_CPU(u64, hook_skips);
+static bool hook_ready;   /* release/acquire: publishes every CPU's probe */
+static atomic_t hook_failed = ATOMIC_INIT(0);   /* 0 none, 1 recording, 2 recorded */
+static struct { int cpu; char site[32]; struct bx_probe probe; } hook_failure;
+
+static void hook_fail(struct bx_hook_cpu *h, const char *site)
+{
+    int cpu = smp_processor_id();
+    if (atomic_cmpxchg(&hook_failed, 0, 1) == 0) {
+        hook_failure.cpu = cpu;
+        strscpy(hook_failure.site, site ? site : "?", sizeof(hook_failure.site));
+        hook_failure.probe = h->probe;
+        atomic_set_release(&hook_failed, 2);
+    }
+    if (atomic_cmpxchg(&abort_run, 0, 1) == 0) {
+        pr_err("bitoxin: hook failure site=%s cpu=%d\n", site ? site : "?", cpu);
+        report("hook_cpu", (unsigned int)cpu, &h->probe);
+    }
+}
+
+void bitoxin_probe_point(const char *site)
+{
+    struct bx_hook_cpu *h = get_cpu_ptr(&hook_cpu);
+    if (!smp_load_acquire(&hook_ready) || atomic_read(&abort_run) || !h->buffer)
+        goto out;
+    if (atomic_cmpxchg(&h->busy, 0, 1)) {   /* nested call on this CPU (IRQ) */
+        this_cpu_inc(hook_skips);
+        goto out;
+    }
+    this_cpu_inc(hook_calls);
+    WRITE_ONCE(h->site, site);
+    if (bx_run(&h->probe, hook_budget) != BX_OK)
+        hook_fail(h, site);
+    WRITE_ONCE(h->site, NULL);
+    atomic_set(&h->busy, 0);
+out:
+    put_cpu_ptr(&hook_cpu);
+}
+EXPORT_SYMBOL_GPL(bitoxin_probe_point);
+
+static int setup_hook(void)
+{
+    unsigned int cpu;
+    for_each_possible_cpu(cpu) {
+        struct bx_hook_cpu *h = per_cpu_ptr(&hook_cpu, cpu);
+        h->buffer = kmalloc(BX_HOOK_BYTES, GFP_KERNEL);
+        if (!h->buffer)
+            return -ENOMEM;
+        if (bx_init(&h->probe, h->buffer, BX_HOOK_BYTES, 1U + cpu % (BX_HOOK_BYTES * 8U - 1U)) != BX_OK ||
+            bx_set_lane(&h->probe, lane_rounds, trap) != BX_OK)
+            return -EINVAL;
+    }
+    smp_store_release(&hook_ready, true);
+    return 0;
+}
+
+static void release_hook(void)
+{
+    unsigned int cpu;
+    WRITE_ONCE(hook_ready, false);
+    synchronize_rcu();   /* callers run with preemption disabled */
+    for_each_possible_cpu(cpu) {
+        kfree(per_cpu_ptr(&hook_cpu, cpu)->buffer);
+        per_cpu_ptr(&hook_cpu, cpu)->buffer = NULL;
+    }
 }
 
 /* Fresh vmalloc pages at a verified pass boundary; the next buffer is allocated
@@ -255,7 +337,26 @@ static int status_show(struct seq_file *s, void *unused)
                    snap.error.lane_expected, snap.error.lane_observed);
     }
     seq_puts(s, "]");
-    /* BITOXIN_STATUS_HOOK: Task 13 appends the hook object here. */
+    {
+        u64 calls = 0, skips = 0;
+        unsigned int cpu;
+        int failed = atomic_read_acquire(&hook_failed);
+        for_each_possible_cpu(cpu) {
+            calls += per_cpu(hook_calls, cpu);
+            skips += per_cpu(hook_skips, cpu);
+        }
+        seq_printf(s, ",\"hook\":{\"budget\":%u,\"calls\":%llu,\"nested_skips\":%llu,\"failed\":%s",
+                   hook_budget, calls, skips, yes(failed));
+        if (failed == 2) {
+            const struct bx_probe *p = &hook_failure.probe;
+            seq_printf(s, ",\"cpu\":%d,\"site\":\"%s\",\"error\":\"%s\",\"error_bit\":%u,\"expected\":\"%016llx\",\"observed\":\"%016llx\",\"lane_reg\":\"%s\",\"lane_expected\":\"%016llx\",\"lane_observed\":\"%016llx\"",
+                       hook_failure.cpu, hook_failure.site, bx_result_name(p->error.code),
+                       p->error.bit, p->error.expected, p->error.observed,
+                       bx_lane_reg_name(p->error.lane_index), p->error.lane_expected,
+                       p->error.lane_observed);
+        }
+        seq_puts(s, "}");
+    }
     seq_puts(s, "}\n");
     return 0;
 }
@@ -327,12 +428,13 @@ static int __init bitoxin_init(void)
     int err;
     struct dentry *status;
     /* A chunk has no scheduling point and both target kernels are
-     * PREEMPT_VOLUNTARY: the last test bounds its lane work (soft lockups). */
+     * PREEMPT_VOLUNTARY; a hook call runs with preemption disabled. The last
+     * two tests bound their lane work (soft lockups, scheduling latency). */
     if ((!per_cpu && threads > BX_MAX_WORKERS) || mem_kib > BX_MAX_BYTES / 1024 ||
         (mem_kib & (mem_kib - 1)) || !seed || (mem_kib && seed >= mem_kib * 8192U) ||
         !chunk || chunk > 65536 || pause_ms > 1000 || !lane_rounds ||
         lane_rounds > BX_MAX_ROUNDS || !hook_budget || hook_budget > 65536 ||
-        (u64)chunk * lane_rounds > (1U << 24))
+        (u64)chunk * lane_rounds > (1U << 24) || (u64)hook_budget * lane_rounds > (1U << 16))
         return -EINVAL;
     nworkers = threads;
     if (per_cpu) {
@@ -369,7 +471,9 @@ static int __init bitoxin_init(void)
         }
         publish(w, "ready");
     }
-    /* BITOXIN_INIT_HOOK: Tasks 13-14 set up the hook and die notifier here. */
+    err = setup_hook();
+    if (err)
+        goto fail;
     err = register_pm_notifier(&pm_notifier);
     if (err)
         goto fail;
@@ -406,6 +510,7 @@ static int __init bitoxin_init(void)
 fail_notifier:
     unregister_pm_notifier(&pm_notifier);
 fail:
+    release_hook();
     release_workers();
     return err;
 }
@@ -413,7 +518,7 @@ fail:
 static void __exit bitoxin_exit(void)
 {
     debugfs_remove_recursive(debug_root);
-    /* BITOXIN_EXIT_HOOK: Tasks 13-14 tear down the hook and die notifier here. */
+    release_hook();
     unregister_pm_notifier(&pm_notifier);
     release_workers();
     pr_info("bitoxin: unloaded pm_prepare=%lld pm_post=%lld failed=%d\n",

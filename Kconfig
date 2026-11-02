@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+config BITOXIN_QA
+	tristate "BITOXIN state-integrity probe"
+	depends on DEBUG_FS
+	help
+	  Preemptible register-chain and retained-memory probe for QA campaigns,
+	  with BITOXIN_PROBE() insertion points (see bitoxin_hook.h).
+	  If unsure, say N.
