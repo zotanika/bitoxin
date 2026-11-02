@@ -9,3 +9,15 @@ Module.symvers
 modules.order
 .tmp_versions/
 __pycache__/
+.DS_Store
+# Local-only paper and documentation material
+/docs/
+/paper/
+/output/
+/experiments/
+/tools/build_paper.sh
+/tools/build_whitepaper.py
+/tools/package_arxiv.py
+/tools/prepare_paper.py
+/tests/test_observability.py
+/tests/test_package.py
