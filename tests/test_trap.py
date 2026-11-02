@@ -61,15 +61,33 @@ class TrapDecodeTest(unittest.TestCase):
     def test_simd_fault(self):
         self.assertEqual(self.check('-DBX_SIMD_FAULT=7')['kind'], 'simd')
 
+    def test_concurrent_traps_print_one_record(self):
+        """Workers trapping at once: the first one reports, the others wait."""
+        with tempfile.TemporaryDirectory(prefix='bitoxin-trap-') as directory:
+            binary = runner(directory, 'fault', ['-DBX_LANE_FAULT=5'])
+            record = subprocess.run([binary, '--kib', '1', '--passes', '1'],
+                                    capture_output=True, text=True, timeout=30)
+            if json.loads(record.stdout)['backend'] == 'portable-c':
+                self.skipTest('native lane required')
+            for attempt in range(10):
+                trapped = subprocess.run([binary, '--threads', '8', '--kib', '1',
+                                          '--passes', '1', '--trap'],
+                                         capture_output=True, text=True, timeout=30)
+                self.assertEqual(trapped.returncode, 1, f'run {attempt}: {trapped.stderr}')
+                lines = trapped.stdout.splitlines()
+                self.assertEqual(len(lines), 1, f'run {attempt}: {trapped.stdout}')
+                self.assertEqual(json.loads(lines[0])['status'], 'trapped')
+
     @unittest.skipUnless(platform.machine() in ('arm64', 'aarch64', 'riscv64'),
-                         '__builtin_trap raises SIGTRAP on AArch64 and RISC-V only')
+                         '__builtin_trap may raise SIGTRAP on AArch64 and RISC-V only')
     def test_foreign_trap_is_not_decoded(self):
-        """The portable lane traps with __builtin_trap, which has no marker."""
+        """The portable lane traps with __builtin_trap, which has no marker
+        (GCC: brk/ebreak, SIGTRAP; LLVM on RISC-V: unimp, SIGILL)."""
         with tempfile.TemporaryDirectory(prefix='bitoxin-trap-') as directory:
             binary = runner(directory, 'portable', ['-DBX_PORTABLE', '-DBX_LANE_FAULT=5'])
             trapped = subprocess.run([binary, '--kib', '1', '--passes', '1', '--trap'],
                                      capture_output=True, text=True, timeout=30)
-            self.assertEqual(trapped.returncode, -signal.SIGTRAP, trapped.stderr)
+            self.assertIn(trapped.returncode, (-signal.SIGTRAP, -signal.SIGILL), trapped.stderr)
             self.assertEqual(trapped.stdout, '')
 
 

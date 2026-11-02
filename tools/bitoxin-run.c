@@ -27,7 +27,7 @@
 #endif
 
 _Static_assert(ATOMIC_INT_LOCK_FREE == 2, "signal flag must be lock-free");
-static atomic_int interrupted, abort_run, active;
+static atomic_int interrupted, abort_run, active, trap_claimed;
 static unsigned nthreads = 1, kib = 1024, seed = 1, chunk = 4096, pause_ms, rounds = 1;
 static int churn, trap_mode, per_cpu;
 static uint64_t suspends, suspended_ms;
@@ -329,13 +329,14 @@ static size_t put_dec(char *out, size_t at, uint64_t v)
 }
 
 /* --trap: decode the live registers at a BITOXIN trap, print one JSON record
- * and exit 1. Async-signal-safe: no stdio, no allocation; only mem*, the pure
- * decoders, write and _exit (sigaction and raise for a foreign trap, which
- * keeps its default action). A trap is ours when the trap instruction is
- * followed by the marker word, both read with memcpy (on RISC-V they may be
- * only 2-byte aligned). Lane traps (kinds 1, 2, 5): A = token, C = check word,
- * bit = the visited bit. C-detected traps (kinds 3, 4): A = expected,
- * B = observed, C = bit. */
+ * and exit 1. Async-signal-safe: no stdio, no allocation; only mem*, lock-free
+ * atomics, the pure decoders, write, pause and _exit (sigaction and raise for a
+ * foreign trap, which keeps its default action). A trap is ours when the trap
+ * instruction is followed by the marker word, both read with memcpy (on RISC-V
+ * they may be only 2-byte aligned). Only the first worker to trap prints: the
+ * others wait in pause() for its _exit. Lane traps (kinds 1, 2, 5): A = token,
+ * C = check word, bit = the visited bit. C-detected traps (kinds 3, 4):
+ * A = expected, B = observed, C = bit. */
 static void trap_signal(int sig, siginfo_t *info, void *ctx)
 {
     static const char *const kinds[] = { "none", "register", "memory", "data", "state", "simd" };
@@ -343,16 +344,21 @@ static void trap_signal(int sig, siginfo_t *info, void *ctx)
     size_t at = 0;
     uint64_t pc = ctx_pc(ctx), kind, a, b, c, expected = 0, observed = 0;
     uint64_t regs[BX_SIMD_MAX * 2];
-    uint32_t words[2] = { 0, 0 };
+    uint32_t insn = 0, marker = 0;
     int i, index;
     const char *reg = "";
     (void)sig; (void)info;
-    if (pc) memcpy(words, (const void *)(uintptr_t)pc, sizeof(words));
-    if (words[0] != BX_TRAP_INSN || words[1] != BX_TRAP_MARKER || !self) {
-        /* Not ours: take the default action. SA_RESETHAND is not enough, as
-         * POSIX lets SIGTRAP keep its handler (macOS does); the raised signal
-         * stays blocked until the handler returns. */
+    if (pc) memcpy(&insn, (const void *)(uintptr_t)pc, sizeof(insn));
+    /* A foreign trap may end its text mapping: read pc + 4 only after ours. */
+    if (insn == BX_TRAP_INSN)
+        memcpy(&marker, (const void *)(uintptr_t)(pc + 4U), sizeof(marker));
+    if (insn != BX_TRAP_INSN || marker != BX_TRAP_MARKER || !self) {
+        /* Not ours: the default action, unless a decoded trap is being
+         * reported (then wait for its _exit). The handler stays installed, so
+         * reset it by hand; the raised signal stays blocked until we return. */
         struct sigaction fallback;
+        if (atomic_load(&trap_claimed))
+            for (;;) pause();
         memset(&fallback, 0, sizeof(fallback));
         fallback.sa_handler = SIG_DFL;
         sigemptyset(&fallback.sa_mask);
@@ -360,6 +366,9 @@ static void trap_signal(int sig, siginfo_t *info, void *ctx)
         (void)raise(SIGTRAP);
         return;
     }
+    /* One record: a later trapping worker waits for the first one's _exit. */
+    if (atomic_exchange(&trap_claimed, 1))
+        for (;;) pause();
     kind = ctx_gpr(ctx, bx_trap_regno(BX_TRAP_REG_KIND));
     a = ctx_gpr(ctx, bx_trap_regno(BX_TRAP_REG_A));
     b = ctx_gpr(ctx, bx_trap_regno(BX_TRAP_REG_B));
@@ -430,6 +439,7 @@ static void usage(FILE *f)
                "each kept on its CPU (Linux only).\n"
                "--trap stops at the first failure with a trap in place (brk/ebreak) and\n"
                "prints one JSON record decoded from the live registers instead (exit 1).\n"
+               "Native lanes only (aarch64, riscv64): a portable build traps without a record.\n"
                "--passes 0 runs until SIGINT/SIGTERM. Output: one final JSON record.\n");
 }
 
@@ -531,7 +541,7 @@ int main(int argc, char **argv)
         struct sigaction trap_action;
         memset(&trap_action, 0, sizeof(trap_action));
         trap_action.sa_sigaction = trap_signal;
-        trap_action.sa_flags = SA_SIGINFO | SA_RESETHAND;
+        trap_action.sa_flags = SA_SIGINFO;
         sigemptyset(&trap_action.sa_mask);
         if (sigaction(SIGTRAP, &trap_action, NULL)) { perror("sigaction"); return 3; }
     }

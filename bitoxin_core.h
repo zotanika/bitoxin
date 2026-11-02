@@ -58,7 +58,8 @@ int bx_set_lane(struct bx_probe *p, bx_u32 rounds, int trap);
 int bx_run(struct bx_probe *p, bx_u32 budget);
 /* Never sleeps but is O(bytes): workers only. Only at a pass boundary; buffer
  * must hold at least p->bytes. Also checks every byte of the released buffer
- * (BX_DATA_ERROR, latched; the new buffer is then not bound). */
+ * (BX_DATA_ERROR, latched): the new buffer may then be partly written, but it
+ * is not bound. */
 int bx_rebind(struct bx_probe *p, volatile bx_u8 *buffer);
 /* Kernel: may sleep and freeze; workers only, no locks held, never atomic
  * context (the BSP hook). A freeze in the middle does not restart the audit:
