@@ -61,6 +61,8 @@ static inline bx_u64 bx_a64_step(unsigned k, bx_u64 v)
 
 #if defined(__aarch64__) && !defined(BX_PORTABLE)
 #include "lane_arm64.h"
+#elif defined(__riscv) && __riscv_xlen == 64 && !defined(BX_PORTABLE)
+#include "lane_riscv64.h"
 #else
 #include "lane_portable.h"
 #endif

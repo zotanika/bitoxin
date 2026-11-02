@@ -32,7 +32,7 @@ CONFIG = {
                     # GCC spells conditional branches without the dot (beq).
                     control={'cmp', 'cmn', 'tst', 'cbz', 'cbnz', 'tbz', 'tbnz',
                              *('b' + c for c in A64_COND)},
-                    jump={'b'}, call={'bl', 'blr'}, caller_saved=set(range(19))),
+                    jump={'b'}, call={'bl', 'blr'}, caller_saved={*range(19), 30}),
     'riscv64': dict(lane_end=r'^\s*mv\s+a0,\s*t6\s*$', result='a0', store={'sb'},
                     exclusive=re.compile(r'sc\.[wd](?:\.(?:aq|rl|aqrl))?$'),
                     other_store=re.compile(r's[hwd]$'),
