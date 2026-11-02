@@ -105,12 +105,16 @@ int bx_run(struct bx_probe *p, bx_u32 budget)
 
     while (budget--) {
         if (p->phase == BX_WALK) {
-            bx_u32 index, lfsr, status;
+            bx_u32 index, lfsr, status, rounds;
             bx_u8 observed, mask;
             bx_u64 token, carried;
             if (p->walked >= p->bits)
                 return fail(p, BX_STATE_ERROR, 0, p->bits - 1, p->walked);
-            /* Traversal state is reloaded from memory every step (2018 design). */
+            /* Traversal state is reloaded from memory every step (2018 design).
+             * Zero rounds would never end the AArch64 lane loop. */
+            rounds = *(volatile bx_u32 *)&p->rounds;
+            if (!rounds || rounds > BX_MAX_ROUNDS)
+                return fail(p, BX_STATE_ERROR, 0, BX_MAX_ROUNDS, rounds);
             lfsr = *(volatile bx_u32 *)&p->lfsr;
             if (p->walked == p->bits - 1) {
                 if (lfsr != p->seed)
@@ -131,7 +135,7 @@ int bx_run(struct bx_probe *p, bx_u32 budget)
              * The lane checks the bit and supplies the store. */
             token = (((bx_u64)index * 0x9e3779b97f4a7c15ULL) & ~0xffULL) | observed;
             carried = bx_lane(token, (index & 7U) | ((bx_u64)p->expected << 8),
-                              p->rounds, p->trap ? NULL : p->lane_regs, &status);
+                              rounds, p->trap ? NULL : p->lane_regs, &status);
             if (status == BX_LANE_MEMORY)
                 return fail(p, BX_DATA_ERROR, index, p->expected, !p->expected);
             if (status != BX_LANE_OK)

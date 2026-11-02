@@ -35,6 +35,8 @@ static inline bx_u64 bx_lane(bx_u64 token, bx_u64 check, bx_u32 rounds,
     register bx_u64 *x1 __asm__("x1") = snapshot;
     register bx_u64 x2 __asm__("x2") = rounds;
     register bx_u64 x3 __asm__("x3") = check;
+    /* The bit check compares all of check >> 8 (not one bit), so a corrupted
+     * expected value above 1 is a memory mismatch: stricter than portable. */
     __asm__ volatile(
         "and x4, x3, #7\n\t" "lsr x5, x0, x4\n\t" "and x5, x5, #1\n\t"
         "lsr x6, x3, #8\n\t" "eor x5, x5, x6\n\t" "cbnz x5, 8f\n\t"

@@ -19,27 +19,35 @@ ARCH = {'arm64': 'aarch64'}.get(platform.machine().lower(), platform.machine().l
 ABI = {'zero': 0, 'ra': 1, 'sp': 2, 'gp': 3, 'tp': 4, 't0': 5, 't1': 6, 't2': 7,
        's0': 8, 'fp': 8, 's1': 9, **{f'a{i}': 10 + i for i in range(8)},
        **{f's{i}': 16 + i for i in range(2, 12)}, **{f't{i}': 25 + i for i in range(3, 7)}}
+A64_COND = ('eq', 'ne', 'cs', 'hs', 'cc', 'lo', 'mi', 'pl', 'vs', 'vc', 'hi', 'ls',
+            'ge', 'lt', 'gt', 'le')
 CONFIG = {
-    'aarch64': dict(lane_end=r'^\s*mov\s+x0,\s*x28\s*$', store='strb',
+    'aarch64': dict(lane_end=r'^\s*mov\s+x0,\s*x28\s*$', result='x0',
+                    store={'strb', 'sturb', 'stlrb'},
+                    exclusive=re.compile(r'stl?x[rp][bh]?$'),
                     other_store=re.compile(r'st'),
                     reg=re.compile(r'\b[wx](\d+)\b'), zero=set(),
                     flow={'mov', 'eor', 'and', 'orr', 'bic', 'lsl', 'lsr', 'asr', 'ror',
                           'add', 'sub', 'mul', 'mvn', 'ubfx', 'uxtb', 'sxtb'},
-                    control={'cmp', 'cmn', 'tst', 'cbz', 'cbnz', 'tbz', 'tbnz', 'b', 'bl',
-                             # GCC spells conditional branches without the dot (beq).
-                             *('b' + c for c in ('eq', 'ne', 'cs', 'hs', 'cc', 'lo', 'mi',
-                                                 'pl', 'vs', 'vc', 'hi', 'ls', 'ge', 'lt',
-                                                 'gt', 'le'))}),
-    'riscv64': dict(lane_end=r'^\s*mv\s+a0,\s*t6\s*$', store='sb',
-                    other_store=re.compile(r'(?:s[hwd]|sc\.[wd])$'),
+                    # GCC spells conditional branches without the dot (beq).
+                    control={'cmp', 'cmn', 'tst', 'cbz', 'cbnz', 'tbz', 'tbnz',
+                             *('b' + c for c in A64_COND)},
+                    jump={'b'}, call={'bl', 'blr'}, caller_saved=set(range(19))),
+    'riscv64': dict(lane_end=r'^\s*mv\s+a0,\s*t6\s*$', result='a0', store={'sb'},
+                    exclusive=re.compile(r'sc\.[wd](?:\.(?:aq|rl|aqrl))?$'),
+                    other_store=re.compile(r's[hwd]$'),
                     reg=re.compile(r'\b(' + '|'.join(sorted(ABI, key=len, reverse=True)) + r')\b'),
                     zero={0},
                     flow={'mv', 'xor', 'xori', 'and', 'andi', 'or', 'ori', 'sll', 'slli',
                           'srl', 'srli', 'add', 'addi', 'addw', 'addiw', 'sub', 'not', 'neg',
                           'zext.b', 'sext.w', 'slliw', 'srliw'},
                     control={'beq', 'bne', 'beqz', 'bnez', 'blt', 'bge', 'bltu', 'bgeu',
-                             'bgtu', 'bleu', 'bgt', 'ble', 'j', 'call', 'jal'}),
+                             'bgtu', 'bleu', 'bgt', 'ble'},
+                    jump={'j'}, call={'call', 'jal', 'jalr'},
+                    caller_saved={1, 5, 6, 7, *range(10, 18), *range(28, 32)}),
 }
+ASM_END = re.compile(r'(?:InlineAsm End|#NO_APP|;\s*0\s+\"\"\s+2)')
+LABEL = re.compile(r'^([^\s:;#]+):')
 
 
 def register_ids(cfg, text):
@@ -49,16 +57,31 @@ def register_ids(cfg, text):
 
 
 def stored_value_depends_on_lane(cfg, assembly):
-    match = re.search(cfg['lane_end'], assembly, re.M)
-    if not match:
+    """True when every copy of the lane feeds its result into the next byte store."""
+    lines = assembly.splitlines()
+    labels = {}
+    for number, raw in enumerate(lines):
+        label = LABEL.match(raw)
+        if label:
+            labels.setdefault(label.group(1), number)
+    copies = [m.end() for m in re.finditer(cfg['lane_end'], assembly, re.M)]
+    if not copies:
         raise AssertionError('cannot find the register lane output')
-    tail = assembly[match.end():]
-    end = re.search(r'(?:InlineAsm End|#NO_APP|;\s*0\s+\"\"\s+2)', tail)
-    if not end:
-        raise AssertionError('cannot find inline-assembly boundary')
-    live = register_ids(cfg, 'x0' if ARCH == 'aarch64' else 'a0')
-    for raw in tail[end.end():].splitlines():
-        line = raw.split('//', 1)[0].split(';', 1)[0].strip()
+    for offset in copies:
+        end = ASM_END.search(assembly, offset)
+        if not end:
+            raise AssertionError('cannot find inline-assembly boundary')
+        if not lane_feeds_store(cfg, lines, labels, assembly.count('\n', 0, end.end()) + 1):
+            return False
+    return True
+
+
+def lane_feeds_store(cfg, lines, labels, number):
+    live = register_ids(cfg, cfg['result'])
+    visited = set()
+    while number < len(lines):
+        line = lines[number].split('//', 1)[0].split(';', 1)[0].strip()
+        number += 1
         if not line or line.startswith(('.', '#')) or line.endswith(':'):
             continue
         parts = line.split(None, 1)
@@ -66,13 +89,27 @@ def stored_value_depends_on_lane(cfg, assembly):
         args = [s.strip() for s in operands.split(',')]
         if op == 'ret':
             raise AssertionError('reached a return before the byte store')
-        if op == cfg['store']:
+        if op in cfg['store']:
             value = register_ids(cfg, args[0])
             if not value:
                 continue  # Constant (zero-register) store, e.g. an error flag.
             return bool(value & live)
+        if op in cfg['jump']:
+            if args[0] not in labels:
+                raise AssertionError('cannot find branch target: ' + line)
+            if args[0] in visited:
+                raise AssertionError('branch loop before the byte store: ' + line)
+            visited.add(args[0])
+            number = labels[args[0]] + 1
+            continue
+        if op in cfg['call']:
+            live -= cfg['caller_saved']  # The callee may overwrite them.
+            continue
         if op in cfg['control'] or op.startswith('b.'):
             continue  # Control dependence is not data dependence.
+        if cfg['exclusive'].match(op):
+            live -= register_ids(cfg, args[0])  # Store-exclusive status result.
+            continue
         if cfg['other_store'].match(op):
             continue  # Other stores; s-prefixed ALU ops (subs, srai) are not skipped.
         dest = register_ids(cfg, args[0])
