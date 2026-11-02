@@ -201,11 +201,13 @@ int bx_run(struct bx_probe *p, bx_u32 budget)
 }
 
 /* Replace the buffer between verified passes (allocation churn). The new buffer
- * gets the uniform value the finished pass left behind. */
+ * gets the uniform value the finished pass left behind, and the released buffer
+ * must still hold it: a change since the verify (e.g. across a suspend not yet
+ * detected) is a data error, latched before the new buffer is bound. */
 int bx_rebind(struct bx_probe *p, volatile bx_u8 *buffer)
 {
     bx_u32 i;
-    bx_u8 fill;
+    bx_u8 fill, got;
     if (!p)
         return BX_BAD_CONFIG;
     if (p->error.code != BX_OK)
@@ -219,8 +221,12 @@ int bx_rebind(struct bx_probe *p, volatile bx_u8 *buffer)
     if (p->lfsr != p->seed) /* every pass ends with lfsr == seed: corruption */
         return fail(p, BX_STATE_ERROR, 0, p->seed, p->lfsr);
     fill = p->expected ? 0xff : 0x00;
-    for (i = 0; i < p->bytes; ++i)
+    for (i = 0; i < p->bytes; ++i) {
+        got = p->buffer[i]; /* report the byte that was compared */
+        if (got != fill)
+            return fail(p, BX_DATA_ERROR, i * 8U, fill, got);
         buffer[i] = fill;
+    }
     p->buffer = buffer;
     return BX_OK;
 }

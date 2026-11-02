@@ -140,6 +140,23 @@ int main(void)
     for (i = 0; i < sizeof(b); ++i) assert(b[i] == 0x5a);
     puts("PASS rebind returns a latched error unchanged");
 
+    /* The released buffer is checked: a change since the verify is not lost. */
+    assert(bx_init(&p, a, 512, 9) == BX_OK);
+    until_pass(&p, 1, 4096);   /* boundary value 0x00 */
+    memset(b, 0x5a, sizeof(b));
+    a[300] ^= 0x04;
+    assert(bx_rebind(&p, b) == BX_DATA_ERROR);
+    assert(p.error.code == BX_DATA_ERROR && p.error.bit == 300U * 8U);
+    assert(p.error.expected == 0 && p.error.observed == 4 && p.buffer == a);
+    assert(bx_run(&p, 1) == BX_DATA_ERROR && p.error.bit == 300U * 8U);
+    assert(bx_init(&q, b, 512, 9) == BX_OK);
+    until_pass(&q, 2, 4096);   /* boundary value 0xff */
+    b[511] &= 0x7f;
+    assert(bx_rebind(&q, a) == BX_DATA_ERROR);
+    assert(q.error.bit == 511U * 8U && q.error.expected == 0xff);
+    assert(q.error.observed == 0x7f && q.buffer == b);
+    puts("PASS rebind checks the released buffer");
+
     /* Every pass ends with lfsr == seed: a moved cursor there is corruption. */
     assert(bx_init(&p, a, 512, 9) == BX_OK);
     until_pass(&p, 1, 4096);

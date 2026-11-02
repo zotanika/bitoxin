@@ -100,29 +100,36 @@ static uint64_t sleep_offset(clockid_t counts, clockid_t stops)
 #endif
 
 #if defined(__linux__)
-static uint64_t read_counter(const char *path)
+/* Leaves *value unchanged when the counter cannot be read. */
+static void read_counter(const char *path, uint64_t *value)
 {
-    char text[32];
+    char text[32], *end;
+    unsigned long long v;
     ssize_t n;
     int fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return 0;
+    if (fd < 0) return;
     n = read(fd, text, sizeof(text) - 1);
     close(fd);
-    if (n <= 0) return 0;
+    if (n <= 0) return;
     text[n] = 0;
-    return strtoull(text, NULL, 10);
+    errno = 0;
+    v = strtoull(text, &end, 10);
+    if (!errno && end != text) *value = (uint64_t)v;
 }
 #endif
 
-/* An unreadable counter reads 0 (absent in containers: always 0). A transient
- * read failure looks like attempts twice, as the sum drops and comes back: up
- * to two extra suspends and audits, never a missed one. */
+/* Monitor thread only. A counter that cannot be read keeps its last value (0
+ * until the first good read; absent in containers: always 0), so a transient
+ * read failure adds no suspend and no audit. Only a failure on the very first
+ * sample costs one extra suspend and audit, when the counter is first read. */
 static void sample(struct bx_sleep_sample *s)
 {
 #if defined(__linux__)
+    static uint64_t successes, failures;
     s->sleep_ns = sleep_offset(CLOCK_BOOTTIME, CLOCK_MONOTONIC);
-    s->attempts = read_counter("/sys/power/suspend_stats/success") +
-                  read_counter("/sys/power/suspend_stats/fail");
+    read_counter("/sys/power/suspend_stats/success", &successes);
+    read_counter("/sys/power/suspend_stats/fail", &failures);
+    s->attempts = successes + failures;
 #elif defined(__APPLE__)
     s->sleep_ns = sleep_offset(CLOCK_MONOTONIC_RAW, CLOCK_UPTIME_RAW);
     s->attempts = 0;
@@ -165,8 +172,10 @@ static void track_cpu(struct worker *w)
 #endif
 }
 
-/* Audit the retained state after a suspend or attempt. Runs before a churn
- * releases the buffer: at a pass boundary the audit rechecks all of it. */
+/* Audit the retained state after a suspend or attempt. Once the suspend has
+ * been detected this runs before a churn releases the buffer: at a pass
+ * boundary the audit rechecks all of it. A suspend not yet detected at that
+ * point is covered by bx_rebind, which checks the released buffer itself. */
 static int audit_after_suspend(struct worker *w)
 {
     unsigned gen = atomic_load(&suspend_gen);
