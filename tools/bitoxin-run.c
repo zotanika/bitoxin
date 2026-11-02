@@ -49,19 +49,24 @@ static unsigned char *map_buffer(size_t size)
 }
 
 /* Fresh pages at each verified boundary: page-table teardown and TLB shootdowns
- * while other threads run in the same address space. */
-static void rebind_buffer(struct worker *w)
+ * while other threads run in the same address space. The next buffer is mapped
+ * before the old one is released. A failed map or a refused rebind counts as a
+ * churn failure and the run goes on; corruption found by the rebind is recorded
+ * in the probe and returned. */
+static int rebind_buffer(struct worker *w)
 {
     unsigned char *next = map_buffer(w->size);
-    if (!next) { ++w->churn_failures; return; }
+    if (!next) { ++w->churn_failures; return BX_OK; }
     if (bx_rebind(&w->probe, next) != BX_OK) {
         munmap(next, w->size);
+        if (w->probe.error.code != BX_OK) return w->probe.error.code;
         ++w->churn_failures;
-        return;
+        return BX_OK;
     }
     munmap(w->buffer, w->size);
     w->buffer = next;
     ++w->churns;
+    return BX_OK;
 }
 
 static void *run_worker(void *arg)
@@ -74,8 +79,11 @@ static void *run_worker(void *arg)
             atomic_store(&abort_run, 1);
             break;
         }
-        if (churn && w->probe.passes != before && (!passes || w->probe.passes < passes))
-            rebind_buffer(w);
+        if (churn && w->probe.passes != before && (!passes || w->probe.passes < passes) &&
+            rebind_buffer(w) != BX_OK) {
+            atomic_store(&abort_run, 1);
+            break;
+        }
         /* BITOXIN_WORKER_HOOK: Task 10 adds suspend audits and CPU tracking here. */
         if (pause_ms) {
             struct timespec delay = { pause_ms / 1000, (long)(pause_ms % 1000) * 1000000L };
@@ -104,8 +112,13 @@ static void usage(FILE *f)
 {
     fprintf(f, "bitoxin-run [--kib N] [--threads N] [--passes N] [--seed N] [--chunk N]\n"
                "            [--pause-ms N] [--lane-rounds N] [--churn]\n"
-               "Defaults: 1024 KiB/worker (0 = largest that maps), 1 worker, 2 passes,\n"
-               "seed 1, chunk 4096, no pause, 1 lane round.\n"
+               "Defaults: 1024 KiB/worker, 1 worker, 2 passes, seed 1, chunk 4096,\n"
+               "no pause, 1 lane round.\n"
+               "--kib 0 picks the largest power of two per worker, up to 256 MiB in total,\n"
+               "that the address space accepts. It is not a free-RAM check: under\n"
+               "overcommit or a cgroup memory limit the fill can be OOM-killed.\n"
+               "--churn maps each new buffer before releasing the old one, so peak memory\n"
+               "is up to twice the buffer total.\n"
                "--passes 0 runs until SIGINT/SIGTERM. Output: one final JSON record.\n");
 }
 
@@ -159,7 +172,7 @@ int main(int argc, char **argv)
     struct sigaction action;
     struct timespec start, end;
     unsigned i, created = 0, allocated = 0;
-    int setup_error = 0, result, a;
+    int setup_error = 0, failed, result, a;
     const char *status;
     for (a = 1; a < argc; ++a) {
         uint64_t value;
@@ -194,9 +207,11 @@ int main(int argc, char **argv)
     clock_gettime(CLOCK_MONOTONIC, &start);
     if (allocate(workers, &allocated)) {
         setup_error = 1;
-    } else if (seed >= kib * 8192U) {
+    } else if (seed >= kib * 8192U) { /* only reachable with --kib 0 */
         for (i = 0; i < allocated; ++i) munmap(workers[i].buffer, workers[i].size);
         free(workers);
+        fprintf(stderr, "--kib 0 chose %u KiB per worker; --seed must be below %u.\n",
+                kib, kib * 8192U);
         goto bad_args;
     }
     for (i = 0; !setup_error && i < nthreads; ++i) {
@@ -223,7 +238,11 @@ int main(int argc, char **argv)
     /* BITOXIN_MONITOR_HOOK: Task 10 watches for suspend here while workers run. */
     for (i = 0; i < created; ++i) pthread_join(workers[i].thread, NULL);
     clock_gettime(CLOCK_MONOTONIC, &end);
-    result = setup_error ? 3 : atomic_load(&abort_run) ? 1 : atomic_load(&interrupted) ? 130 : 0;
+    /* A recorded error always wins over an interruption. */
+    failed = atomic_load(&abort_run);
+    for (i = 0; i < created; ++i)
+        if (workers[i].probe.error.code != BX_OK) failed = 1;
+    result = setup_error ? 3 : failed ? 1 : atomic_load(&interrupted) ? 130 : 0;
     status = result == 3 ? "setup_failed" : result == 1 ? "failed" :
              result == 130 ? "interrupted" : "complete";
     printf("{\"schema\":2,\"status\":\"%s\",\"backend\":\"%s\",\"kib_per_worker\":%u,"

@@ -35,7 +35,7 @@ class RunnerTests(unittest.TestCase):
                      ('--passes', '12junk'), ('--kib',), ('--unknown', '1'),
                      ('--kib', '131072', '--threads', '3'),
                      ('--lane-rounds', '0'), ('--lane-rounds', '65537'),
-                     ('--churn', '1')]:
+                     ('--churn', '1'), ('--kib', '0', '--seed', '4294967295')]:
             with self.subTest(args=args):
                 r = self.run_cli(*args)
                 self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
@@ -61,7 +61,9 @@ class RunnerTests(unittest.TestCase):
             time.sleep(1.0)
             p.send_signal(signal.SIGTERM)
             out, err = p.communicate(timeout=30)
+        self.assertEqual(p.returncode, 130, err)
         data = json.loads(out)
+        self.assertEqual(data['status'], 'interrupted')
         kib = data['kib_per_worker']
         self.assertTrue(kib & (kib - 1) == 0 and 1 <= kib <= 131072, kib)
 
