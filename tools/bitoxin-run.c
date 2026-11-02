@@ -13,19 +13,23 @@
 #include <sched.h>
 #include <signal.h>
 #include <stdatomic.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <ucontext.h>
+#elif defined(__APPLE__)
+#include <sys/ucontext.h>
+#endif
 
 _Static_assert(ATOMIC_INT_LOCK_FREE == 2, "signal flag must be lock-free");
 static atomic_int interrupted, abort_run, active;
 static unsigned nthreads = 1, kib = 1024, seed = 1, chunk = 4096, pause_ms, rounds = 1;
-static int churn;
-/* trap_mode is filled by Task 11 (--trap). */
-static int trap_mode, per_cpu;
+static int churn, trap_mode, per_cpu;
 static uint64_t suspends, suspended_ms;
 static atomic_uint suspend_gen;
 static int homes[32];
@@ -40,6 +44,8 @@ struct worker {
     unsigned seen_gen;
     uint64_t churns, churn_failures, cpu_changes;
 };
+/* The worker running on this thread, for the SIGTRAP decoder. */
+static _Thread_local struct worker *self;
 
 static void stop_signal(int sig)
 {
@@ -189,6 +195,7 @@ static int audit_after_suspend(struct worker *w)
 static void *run_worker(void *arg)
 {
     struct worker *w = arg;
+    self = w;
 #if defined(__linux__)
     if (per_cpu) pin_home(w);
     w->cpu = sched_getcpu();   /* uncounted baseline: the start CPU is not a move */
@@ -214,6 +221,188 @@ static void *run_worker(void *arg)
     return NULL;
 }
 
+/* Register access from a signal context. Local copies of the kernel layouts
+ * avoid header conflicts between glibc and <asm/sigcontext.h>. */
+#if defined(__linux__) && defined(__aarch64__)
+struct bx_a64_ctx { uint32_t magic, size; };
+struct bx_a64_fpsimd { struct bx_a64_ctx head; uint32_t fpsr, fpcr; uint64_t vregs[64]; };
+#define BX_FPSIMD_MAGIC 0x46508001U
+#endif
+#if defined(__aarch64__)
+#define BX_TRAP_INSN 0xd42162e0U /* brk #0xb17 */
+#else
+#define BX_TRAP_INSN 0x00100073U /* ebreak, 4-byte form */
+#endif
+
+static uint64_t ctx_pc(void *ctx)
+{
+    ucontext_t *uc = ctx;
+#if defined(__linux__) && defined(__aarch64__)
+    return uc->uc_mcontext.pc;
+#elif defined(__linux__) && defined(__riscv)
+    return uc->uc_mcontext.__gregs[0];
+#elif defined(__APPLE__) && defined(__aarch64__)
+    return uc->uc_mcontext->__ss.__pc;
+#else
+    (void)uc;
+    return 0;
+#endif
+}
+
+static uint64_t ctx_gpr(void *ctx, int n)
+{
+    ucontext_t *uc = ctx;
+    if (n < 0 || n > 31) return 0;
+#if defined(__linux__) && defined(__aarch64__)
+    return n < 31 ? uc->uc_mcontext.regs[n] : 0;
+#elif defined(__linux__) && defined(__riscv)
+    return n ? uc->uc_mcontext.__gregs[n] : 0; /* __gregs[0] is the pc */
+#elif defined(__APPLE__) && defined(__aarch64__)
+    return n < 29 ? uc->uc_mcontext->__ss.__x[n] : 0;
+#else
+    (void)uc;
+    return 0;
+#endif
+}
+
+/* Half 0: low 64 bits, half 1: high 64 bits (none on RISC-V F). */
+static uint64_t ctx_fpr(void *ctx, int n, unsigned half)
+{
+    ucontext_t *uc = ctx;
+    uint64_t v = 0;
+    if (n < 0 || n > 31 || half > 1) return 0;
+#if defined(__linux__) && defined(__aarch64__)
+    {
+        /* Records in __reserved, each { magic, size }; FPSIMD comes first. */
+        const unsigned char *rec = uc->uc_mcontext.__reserved;
+        size_t at = 0, room = sizeof(uc->uc_mcontext.__reserved);
+        struct bx_a64_ctx head;
+        while (at + sizeof(head) <= room) {
+            memcpy(&head, rec + at, sizeof(head));
+            if (!head.magic || head.size < sizeof(head) || head.size > room - at) break;
+            if (head.magic == BX_FPSIMD_MAGIC) {
+                if (head.size >= sizeof(struct bx_a64_fpsimd))
+                    memcpy(&v, rec + at + offsetof(struct bx_a64_fpsimd, vregs) +
+                           (2U * (unsigned)n + half) * sizeof(v), sizeof(v));
+                break;
+            }
+            at += head.size;
+        }
+    }
+#elif defined(__linux__) && defined(__riscv)
+    if (!half) v = uc->uc_mcontext.__fpregs.__d.__f[n];
+#elif defined(__APPLE__) && defined(__aarch64__)
+    {
+        uint64_t parts[2];
+        memcpy(parts, &uc->uc_mcontext->__ns.__v[n], sizeof(parts));
+        v = parts[half];
+    }
+#else
+    (void)uc;
+#endif
+    return v;
+}
+
+/* Async-signal-safe JSON pieces: no stdio, no allocation. */
+static size_t put_str(char *out, size_t at, const char *s)
+{
+    while (*s && at < 1000) out[at++] = *s++;
+    return at;
+}
+
+static size_t put_hex(char *out, size_t at, uint64_t v)
+{
+    int shift;
+    out[at++] = '"';
+    for (shift = 60; shift >= 0; shift -= 4) out[at++] = "0123456789abcdef"[(v >> shift) & 15U];
+    out[at++] = '"';
+    return at;
+}
+
+static size_t put_dec(char *out, size_t at, uint64_t v)
+{
+    char digits[24];
+    int n = 0;
+    do { digits[n++] = (char)('0' + v % 10U); v /= 10U; } while (v);
+    while (n) out[at++] = digits[--n];
+    return at;
+}
+
+/* --trap: decode the live registers at a BITOXIN trap, print one JSON record
+ * and exit 1. Async-signal-safe: no stdio, no allocation; only mem*, the pure
+ * decoders, write and _exit (sigaction and raise for a foreign trap, which
+ * keeps its default action). A trap is ours when the trap instruction is
+ * followed by the marker word, both read with memcpy (on RISC-V they may be
+ * only 2-byte aligned). Lane traps (kinds 1, 2, 5): A = token, C = check word,
+ * bit = the visited bit. C-detected traps (kinds 3, 4): A = expected,
+ * B = observed, C = bit. */
+static void trap_signal(int sig, siginfo_t *info, void *ctx)
+{
+    static const char *const kinds[] = { "none", "register", "memory", "data", "state", "simd" };
+    char out[1024];
+    size_t at = 0;
+    uint64_t pc = ctx_pc(ctx), kind, a, b, c, expected = 0, observed = 0;
+    uint64_t regs[BX_SIMD_MAX * 2];
+    uint32_t words[2] = { 0, 0 };
+    int i, index;
+    const char *reg = "";
+    (void)sig; (void)info;
+    if (pc) memcpy(words, (const void *)(uintptr_t)pc, sizeof(words));
+    if (words[0] != BX_TRAP_INSN || words[1] != BX_TRAP_MARKER || !self) {
+        /* Not ours: take the default action. SA_RESETHAND is not enough, as
+         * POSIX lets SIGTRAP keep its handler (macOS does); the raised signal
+         * stays blocked until the handler returns. */
+        struct sigaction fallback;
+        memset(&fallback, 0, sizeof(fallback));
+        fallback.sa_handler = SIG_DFL;
+        sigemptyset(&fallback.sa_mask);
+        (void)sigaction(SIGTRAP, &fallback, NULL);
+        (void)raise(SIGTRAP);
+        return;
+    }
+    kind = ctx_gpr(ctx, bx_trap_regno(BX_TRAP_REG_KIND));
+    a = ctx_gpr(ctx, bx_trap_regno(BX_TRAP_REG_A));
+    b = ctx_gpr(ctx, bx_trap_regno(BX_TRAP_REG_B));
+    c = ctx_gpr(ctx, bx_trap_regno(BX_TRAP_REG_C));
+    if (kind == BX_LANE_REGISTER) {
+        for (i = 0; i < bx_lane_count(); ++i) regs[i] = ctx_gpr(ctx, bx_lane_regno(i));
+        index = bx_lane_decode(a, regs, &expected, &observed);
+        reg = bx_lane_reg_name(index);
+#ifdef BX_SIMD
+    } else if (kind == BX_LANE_SIMD) {
+        for (i = 0; i < BX_SIMD_MAX; ++i) {
+            regs[2 * i] = ctx_fpr(ctx, bx_simd_regno(i), 0);
+            regs[2 * i + 1] = ctx_fpr(ctx, bx_simd_regno(i), 1);
+        }
+        index = bx_simd_decode(a, regs, &expected, &observed);
+        reg = bx_simd_reg_name(index);
+#endif
+    }
+    at = put_str(out, at, "{\"schema\":2,\"status\":\"trapped\",\"kind\":\"");
+    at = put_str(out, at, kind <= 5 ? kinds[kind] : "unknown");
+    at = put_str(out, at, "\",\"worker\":");
+    at = put_dec(out, at, self->id);
+    at = put_str(out, at, ",\"pass\":");
+    at = put_dec(out, at, self->probe.passes);
+    at = put_str(out, at, ",\"bit\":");
+    at = put_dec(out, at, kind == BX_LANE_DATA || kind == BX_LANE_STATE ? c : self->probe.cursor);
+    at = put_str(out, at, ",\"a\":");
+    at = put_hex(out, at, a);
+    at = put_str(out, at, ",\"b\":");
+    at = put_hex(out, at, b);
+    at = put_str(out, at, ",\"c\":");
+    at = put_hex(out, at, c);
+    at = put_str(out, at, ",\"lane_reg\":\"");
+    at = put_str(out, at, reg);
+    at = put_str(out, at, "\",\"lane_expected\":");
+    at = put_hex(out, at, expected);
+    at = put_str(out, at, ",\"lane_observed\":");
+    at = put_hex(out, at, observed);
+    at = put_str(out, at, "}\n");
+    (void)!write(STDOUT_FILENO, out, at);
+    _exit(1);
+}
+
 static int number(const char *s, uint64_t *out)
 {
     char *end;
@@ -229,7 +418,7 @@ static int number(const char *s, uint64_t *out)
 static void usage(FILE *f)
 {
     fprintf(f, "bitoxin-run [--kib N] [--threads N] [--passes N] [--seed N] [--chunk N]\n"
-               "            [--pause-ms N] [--lane-rounds N] [--churn] [--per-cpu]\n"
+               "            [--pause-ms N] [--lane-rounds N] [--churn] [--per-cpu] [--trap]\n"
                "Defaults: 1024 KiB/worker, 1 worker, 2 passes, seed 1, chunk 4096,\n"
                "no pause, 1 lane round.\n"
                "--kib 0 picks the largest power of two per worker, up to 256 MiB in total,\n"
@@ -239,6 +428,8 @@ static void usage(FILE *f)
                "is up to twice the buffer total.\n"
                "--per-cpu replaces --threads with one worker per allowed CPU (at most 32),\n"
                "each kept on its CPU (Linux only).\n"
+               "--trap stops at the first failure with a trap in place (brk/ebreak) and\n"
+               "prints one JSON record decoded from the live registers instead (exit 1).\n"
                "--passes 0 runs until SIGINT/SIGTERM. Output: one final JSON record.\n");
 }
 
@@ -301,7 +492,7 @@ int main(int argc, char **argv)
         if (!strcmp(name, "--help")) { usage(stdout); return 0; }
         if (!strcmp(name, "--churn")) { churn = 1; continue; }
         if (!strcmp(name, "--per-cpu")) { per_cpu = 1; continue; }
-        /* BITOXIN_FLAG_HOOK: Task 11 adds --trap here. */
+        if (!strcmp(name, "--trap")) { trap_mode = 1; continue; }
         if (a + 1 == argc || !number(argv[++a], &value)) goto bad_args;
         if (!strcmp(name, "--passes")) { passes = value; continue; }
         if (value > UINT32_MAX) goto bad_args;
@@ -336,7 +527,14 @@ int main(int argc, char **argv)
     if (sigaction(SIGINT, &action, NULL) || sigaction(SIGTERM, &action, NULL)) {
         perror("sigaction"); return 3;
     }
-    /* BITOXIN_SETUP_HOOK: Task 11 installs the SIGTRAP decoder here. */
+    if (trap_mode) {
+        struct sigaction trap_action;
+        memset(&trap_action, 0, sizeof(trap_action));
+        trap_action.sa_sigaction = trap_signal;
+        trap_action.sa_flags = SA_SIGINFO | SA_RESETHAND;
+        sigemptyset(&trap_action.sa_mask);
+        if (sigaction(SIGTRAP, &trap_action, NULL)) { perror("sigaction"); return 3; }
+    }
     workers = calloc(nthreads, sizeof(*workers));
     if (!workers) { perror("calloc"); return 3; }
     clock_gettime(CLOCK_MONOTONIC, &start);

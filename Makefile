@@ -22,18 +22,22 @@ $(BUILD)/test-audit: tests/test_audit.c bitoxin_core.c $(LANE) | $(BUILD)
 	$(CC) $(CFLAGS) $(WARN) -I. tests/test_audit.c bitoxin_core.c -o $@
 $(BUILD)/test-midrun: tests/test_midrun.c bitoxin_core.c $(LANE) | $(BUILD)
 	$(CC) $(CFLAGS) $(WARN) -I. tests/test_midrun.c -o $@
+$(BUILD)/test-trap: tests/test_trap.c bitoxin_core.c $(LANE) | $(BUILD)
+	$(CC) $(CFLAGS) $(WARN) -I. tests/test_trap.c bitoxin_core.c -o $@
 $(BUILD)/test-suspend: tests/test_suspend.c tools/bx_suspend.h | $(BUILD)
 	$(CC) $(CFLAGS) $(WARN) tests/test_suspend.c -o $@
-test: $(BUILD)/test-core $(BUILD)/test-portable $(BUILD)/test-lfsr $(BUILD)/test-midrun $(BUILD)/test-audit $(BUILD)/test-suspend $(BUILD)/bitoxin-run
+test: $(BUILD)/test-core $(BUILD)/test-portable $(BUILD)/test-lfsr $(BUILD)/test-midrun $(BUILD)/test-audit $(BUILD)/test-trap $(BUILD)/test-suspend $(BUILD)/bitoxin-run
 	$(BUILD)/test-core
 	$(BUILD)/test-portable
 	$(BUILD)/test-lfsr
 	$(BUILD)/test-midrun
 	$(BUILD)/test-audit
+	$(BUILD)/test-trap
 	$(BUILD)/test-suspend
 	BITOXIN_RUNNER=$(abspath $(BUILD)/bitoxin-run) $(PYTHON) tests/test_runner.py
 	CC="$(CC)" $(PYTHON) tests/test_codegen.py
 	CC="$(CC)" CFLAGS="$(CFLAGS)" $(PYTHON) tests/test_lane_decode.py
+	CC="$(CC)" CFLAGS="$(CFLAGS)" $(PYTHON) tests/test_trap.py
 sanitize:
 	$(MAKE) BUILD=$(BUILD)/sanitize CFLAGS='-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' test
 module:
