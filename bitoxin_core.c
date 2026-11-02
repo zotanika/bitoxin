@@ -2,10 +2,14 @@
 #include "bitoxin_core.h"
 #include "bitoxin_lane.h"
 #ifdef __KERNEL__
+#include <linux/sched.h>
 #include <linux/string.h>
+static inline void bx_yield(void) { cond_resched(); }
 #else
 #include <string.h>
+static inline void bx_yield(void) { }
 #endif
+#define BX_YIELD_MASK 0xffffU /* bx_audit yields every 65536 iterations */
 
 static const char *const lane_names[BX_LANE_REGS] = BX_LANE_NAMES;
 static const signed char lane_regnos[BX_LANE_REGS] = BX_LANE_REGNOS;
@@ -180,7 +184,8 @@ static unsigned popcount8(bx_u8 v)
 
 /* Check the whole retained state without changing it. Replaying the walk proves
  * every visited bit is flipped; counting flipped bits then proves no unvisited
- * bit is. O(walked + bytes) time, no extra memory. */
+ * bit is. O(walked + bytes) time, no extra memory.
+ * Kernel: may sleep; call from workers only, never atomic context (the hook). */
 int bx_audit(struct bx_probe *p)
 {
     bx_u32 i, lfsr, flipped = 0;
@@ -192,22 +197,32 @@ int bx_audit(struct bx_probe *p)
     visited = p->expected ? 0U : 1U;
     if (p->phase == BX_VERIFY) {
         bx_u8 want = p->expected ? 0 : 0xff;
+        /* Same phase invariants and report as bx_run's verify step. */
+        if (p->walked != p->bits || p->verified >= p->bytes)
+            return fail(p, BX_STATE_ERROR, 0, p->bytes - 1, p->verified);
         for (i = 0; i < p->bytes; ++i) {
             bx_u8 got = p->buffer[i]; /* report the byte that was compared */
             if (got != want)
                 return fail(p, BX_DATA_ERROR, i * 8U, want, got);
+            if ((i & BX_YIELD_MASK) == BX_YIELD_MASK) bx_yield();
         }
     } else {
+        /* Same phase invariant and report as bx_run's walk step. */
+        if (p->walked >= p->bits)
+            return fail(p, BX_STATE_ERROR, 0, p->bits - 1, p->walked);
         lfsr = p->seed;
-        for (i = 0; i < p->walked; ++i) { /* walked < bits here: no zero step */
+        for (i = 0; i < p->walked; ++i) { /* walked < bits: no zero step */
             lfsr = (lfsr >> 1) ^ ((0U - (lfsr & 1U)) & p->taps);
             if (((p->buffer[lfsr >> 3] >> (lfsr & 7U)) & 1U) != visited)
                 return fail(p, BX_DATA_ERROR, lfsr, visited, !visited);
+            if ((i & BX_YIELD_MASK) == BX_YIELD_MASK) bx_yield();
         }
         if (lfsr != p->lfsr)
             return fail(p, BX_STATE_ERROR, 0, lfsr, p->lfsr);
-        for (i = 0; i < p->bytes; ++i)
+        for (i = 0; i < p->bytes; ++i) {
             flipped += popcount8(p->expected ? (bx_u8)~p->buffer[i] : p->buffer[i]);
+            if ((i & BX_YIELD_MASK) == BX_YIELD_MASK) bx_yield();
+        }
         if (flipped != p->walked)
             return fail(p, BX_DATA_ERROR, BX_AUDIT_UNLOCATED, p->walked, flipped);
     }

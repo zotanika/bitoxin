@@ -51,5 +51,19 @@ int main(void)
     p.lfsr ^= 0x10U;
     assert(bx_audit(&p) == BX_STATE_ERROR);
     puts("PASS audit detects a moved traversal state");
+
+    /* A flipped phase is a state error, reported like bx_run's step checks. */
+    assert(bx_init(&p, a, 512, 5) == BX_OK);
+    advance(&p, 100);
+    p.phase = BX_VERIFY;
+    assert(bx_audit(&p) == BX_STATE_ERROR);
+    assert(p.error.expected == 512 - 1 && p.error.observed == 0);
+    /* verified == 0 here; otherwise the entry check already rejects WALK. */
+    assert(bx_init(&p, a, 512, 5) == BX_OK);
+    advance(&p, 4096);
+    p.phase = BX_WALK;
+    assert(bx_audit(&p) == BX_STATE_ERROR);
+    assert(p.error.expected == 4096 - 1 && p.error.observed == 4096);
+    puts("PASS audit rejects a flipped phase as a state error");
     return 0;
 }
