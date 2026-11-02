@@ -59,6 +59,9 @@ static inline bx_u64 bx_a64_step(unsigned k, bx_u64 v)
     }
 }
 
-/* Tasks 3 and 4 add the AArch64 and RISC-V branches here. */
+#if defined(__aarch64__) && !defined(BX_PORTABLE)
+#include "lane_arm64.h"
+#else
 #include "lane_portable.h"
+#endif
 #endif
