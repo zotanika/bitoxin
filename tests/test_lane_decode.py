@@ -34,11 +34,28 @@ class LaneDecodeTest(unittest.TestCase):
                     result = subprocess.run([binary], text=True, capture_output=True)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def check_simd(self, extra):
+        with tempfile.TemporaryDirectory(prefix='bitoxin-simd-') as directory:
+            subprocess.run([build(directory, 'clean', [*extra, '-DBX_SIMD'])], check=True,
+                           capture_output=True)
+            for p in range(30):
+                with self.subTest(position=p, variant=extra):
+                    binary = build(directory, f'simd{p}', [*extra, '-DBX_SIMD',
+                                                          f'-DBX_SIMD_FAULT={p}'])
+                    result = subprocess.run([binary], text=True, capture_output=True)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_native_lane(self):
         self.check_variant([], NATIVE_LENGTH.get(platform.machine(), 24))
 
     def test_portable_lane(self):
         self.check_variant(['-DBX_PORTABLE'], 24)
+
+    def test_native_simd_lane(self):
+        self.check_simd([])
+
+    def test_portable_simd_lane(self):
+        self.check_simd(['-DBX_PORTABLE'])
 
 
 if __name__ == '__main__':

@@ -10,8 +10,8 @@ LANE = bitoxin_core.h bitoxin_lane.h $(wildcard lane_*.h)
 all: $(BUILD)/bitoxin-run
 $(BUILD):
 	mkdir -p $@
-$(BUILD)/bitoxin-run: tools/bitoxin-run.c bitoxin_core.c $(LANE) | $(BUILD)
-	$(CC) $(CFLAGS) $(WARN) -I. tools/bitoxin-run.c bitoxin_core.c -pthread -o $@
+$(BUILD)/bitoxin-run: tools/bitoxin-run.c bitoxin_core.c bitoxin_simd.h $(LANE) | $(BUILD)
+	$(CC) $(CFLAGS) $(WARN) -DBX_SIMD -I. tools/bitoxin-run.c bitoxin_core.c -pthread -o $@
 $(BUILD)/test-core: tests/test_core.c bitoxin_core.c $(LANE) | $(BUILD)
 	$(CC) $(CFLAGS) $(WARN) -I. tests/test_core.c bitoxin_core.c -o $@
 $(BUILD)/test-portable: tests/test_core.c bitoxin_core.c $(LANE) | $(BUILD)

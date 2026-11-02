@@ -1,6 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "bitoxin_core.h"
 #include "bitoxin_lane.h"
+#ifdef BX_SIMD
+#include "bitoxin_simd.h"
+static const char *const simd_names[BX_SIMD_MAX] = BX_SIMD_NAMES;
+#endif
 #ifdef __KERNEL__
 #include <linux/freezer.h>
 #include <linux/kernel.h>
@@ -156,6 +160,15 @@ int bx_run(struct bx_probe *p, bx_u32 budget)
                 return fail(p, BX_DATA_ERROR, index, p->expected, !p->expected);
             if (status != BX_LANE_OK)
                 return lane_fail(p, index, token, carried);
+#ifdef BX_SIMD
+            carried = bx_simd_lane(carried, p->trap ? NULL : p->simd_regs, &status);
+            if (status != BX_LANE_OK) {
+                p->error.lane_index = bx_simd_decode(token, p->simd_regs,
+                    &p->error.lane_expected, &p->error.lane_observed);
+                p->error.lane_simd = 1;
+                return fail(p, BX_REGISTER_ERROR, index, token, carried);
+            }
+#endif
             p->buffer[index >> 3] = (bx_u8)carried ^ mask;
             ++p->walked;
             ++p->operations;
@@ -320,3 +333,49 @@ int bx_lane_decode(bx_u64 token, const bx_u64 *regs, bx_u64 *expected, bx_u64 *o
     }
     return -1;
 }
+
+#ifdef BX_SIMD
+int bx_simd_decode(bx_u64 token, const bx_u64 *regs, bx_u64 *expected, bx_u64 *observed)
+{
+    unsigned p;
+#if BX_SIMD_SIGN_ONLY
+    for (p = 0; p < BX_SIMD_MAX; ++p) {
+        bx_u64 want = token ^ ((p & 1U) ? 0 : 1ULL << 63); /* f(p+1): p+1 negations */
+        if (regs[2 * p] != want) {
+            *expected = want;
+            *observed = regs[2 * p];
+            return (int)p;
+        }
+    }
+#else
+    struct bx_v128 v = bx_v128_dup(token);
+    unsigned h;
+    for (p = 0; p < BX_SIMD_MAX; ++p) {
+        v = bx_neon_step(p + 1, v);
+        for (h = 0; h < 2; ++h)
+            if (regs[2 * p + h] != bx_v128_half(&v, h)) {
+                *expected = bx_v128_half(&v, h);
+                *observed = regs[2 * p + h];
+                return (int)p;
+            }
+    }
+#endif
+    return -1;
+}
+
+const char *bx_simd_reg_name(int index)
+{
+    return index >= 0 && index < BX_SIMD_MAX ? simd_names[index] : "";
+}
+
+int bx_simd_regno(int index)
+{
+#if defined(BX_PORTABLE) || !(defined(__aarch64__) || \
+    (defined(__riscv) && __riscv_xlen == 64))
+    (void)index;
+    return -1;
+#else
+    return index >= 0 && index < BX_SIMD_MAX ? index + 1 : -1;
+#endif
+}
+#endif

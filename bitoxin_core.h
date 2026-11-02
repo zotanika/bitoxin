@@ -66,4 +66,9 @@ const char *bx_lane_reg_name(int index);
 int bx_lane_regno(int index);              /* architectural number, -1 if none */
 int bx_trap_regno(enum bx_trap_reg reg);   /* architectural number, -1 if none */
 int bx_lane_decode(bx_u64 token, const bx_u64 *regs, bx_u64 *expected, bx_u64 *observed);
+#ifdef BX_SIMD
+int bx_simd_decode(bx_u64 token, const bx_u64 *regs, bx_u64 *expected, bx_u64 *observed);
+const char *bx_simd_reg_name(int index);
+int bx_simd_regno(int index);   /* FP/SIMD register number, -1 if none */
+#endif
 #endif
