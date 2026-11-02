@@ -51,9 +51,13 @@ struct bx_probe {
 };
 int bx_init(struct bx_probe *p, volatile bx_u8 *buffer, bx_u32 bytes, bx_u32 seed);
 int bx_set_lane(struct bx_probe *p, bx_u32 rounds, int trap);
+/* bx_run and bx_rebind never sleep; safe in the hook's preempt-disabled path. */
 int bx_run(struct bx_probe *p, bx_u32 budget);
+/* Only at a pass boundary; buffer must hold at least p->bytes. */
 int bx_rebind(struct bx_probe *p, volatile bx_u8 *buffer);
-/* Kernel: may sleep (and freeze); workers only, never atomic context (the BSP hook). */
+/* Kernel: may sleep and freeze; workers only, no locks held, never atomic
+ * context (the BSP hook). A freeze in the middle does not restart the audit:
+ * callers re-audit after resume (the kernel worker does, via resume_gen). */
 int bx_audit(struct bx_probe *p);
 const char *bx_result_name(enum bx_result code);
 const char *bx_backend_name(void);

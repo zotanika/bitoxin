@@ -191,14 +191,18 @@ int bx_rebind(struct bx_probe *p, volatile bx_u8 *buffer)
 {
     bx_u32 i;
     bx_u8 fill;
-    if (!p || !buffer)
+    if (!p)
         return BX_BAD_CONFIG;
     if (p->error.code != BX_OK)
         return p->error.code;
+    if (!buffer)
+        return BX_BAD_CONFIG;
     if (!valid_state(p)) /* a corrupted size would overrun the new buffer */
         return fail(p, BX_STATE_ERROR, 0, 0, p->lfsr);
-    if (p->phase != BX_WALK || p->walked || p->verified || p->lfsr != p->seed)
-        return BX_BAD_CONFIG;
+    if (p->phase != BX_WALK || p->walked || p->verified)
+        return BX_BAD_CONFIG; /* mid-pass: misuse */
+    if (p->lfsr != p->seed) /* every pass ends with lfsr == seed: corruption */
+        return fail(p, BX_STATE_ERROR, 0, p->seed, p->lfsr);
     fill = p->expected ? 0xff : 0x00;
     for (i = 0; i < p->bytes; ++i)
         buffer[i] = fill;
@@ -216,7 +220,8 @@ static unsigned popcount8(bx_u8 v)
 /* Check the whole retained state without changing it. Replaying the walk proves
  * every visited bit is flipped; counting flipped bits then proves no unvisited
  * bit is. O(walked + bytes) time, no extra memory.
- * Kernel: may sleep (and freeze); workers only, never atomic context (the BSP hook). */
+ * Kernel: may sleep and freeze; workers only, no locks held, never atomic context
+ * (the BSP hook). A freeze does not restart it: callers re-audit after resume. */
 int bx_audit(struct bx_probe *p)
 {
     bx_u32 i, lfsr, flipped = 0;

@@ -113,12 +113,44 @@ int main(void)
     memset(b, 0x5a, sizeof(b));
     assert(bx_rebind(&p, b) == BX_OK);
     for (i = 0; i < sizeof(b); ++i) assert(b[i] == 0);
-    until_pass(&p, 3, 999);
-    assert(p.passes == 3 && p.operations == 3U * 4608U && p.buffer == b);
+    until_pass(&p, 2, 999);
+    memset(a, 0x5a, sizeof(a));
+    assert(bx_rebind(&p, a) == BX_OK); /* even pass: the 0xff polarity */
+    for (i = 0; i < sizeof(a); ++i) assert(a[i] == 0xff);
+    until_pass(&p, 4, 999);
+    assert(p.passes == 4 && p.operations == 4U * 4608U && p.buffer == a);
     assert(bx_run(&p, 10) == BX_OK);
-    assert(bx_rebind(&p, a) == BX_BAD_CONFIG);
+    assert(bx_rebind(&p, b) == BX_BAD_CONFIG);
     assert(bx_rebind(&p, NULL) == BX_BAD_CONFIG);
-    puts("PASS rebind at pass boundaries only");
+    assert(p.error.code == BX_OK && p.buffer == a);
+    puts("PASS rebind at pass boundaries only, both polarities");
+
+    /* A latched error is returned unchanged; the new buffer is not touched. */
+    assert(bx_init(&p, a, 512, 9) == BX_OK);
+    until_pass(&p, 1, 4096);
+    a[7] ^= 0x10;
+    assert(bx_audit(&p) == BX_DATA_ERROR);
+    assert(p.error.bit == BX_AUDIT_UNLOCATED);
+    assert(p.error.expected == 0 && p.error.observed == 1);
+    memset(b, 0x5a, sizeof(b));
+    assert(bx_rebind(&p, b) == BX_DATA_ERROR);
+    assert(bx_rebind(&p, NULL) == BX_DATA_ERROR);
+    assert(p.error.code == BX_DATA_ERROR && p.error.bit == BX_AUDIT_UNLOCATED);
+    assert(p.error.expected == 0 && p.error.observed == 1 && p.buffer == a);
+    for (i = 0; i < sizeof(b); ++i) assert(b[i] == 0x5a);
+    puts("PASS rebind returns a latched error unchanged");
+
+    /* Every pass ends with lfsr == seed: a moved cursor there is corruption. */
+    assert(bx_init(&p, a, 512, 9) == BX_OK);
+    until_pass(&p, 1, 4096);
+    memset(b, 0x5a, sizeof(b));
+    p.lfsr = 10;
+    assert(bx_rebind(&p, b) == BX_STATE_ERROR);
+    assert(p.error.code == BX_STATE_ERROR && p.error.expected == 9);
+    assert(p.error.observed == 10 && p.buffer == a);
+    for (i = 0; i < sizeof(b); ++i) assert(b[i] == 0x5a);
+    assert(bx_run(&p, 1) == BX_STATE_ERROR && p.error.observed == 10);
+    puts("PASS rebind latches a moved boundary cursor");
 
     /* A corrupted size is a state error, not an overrun of the new buffer. */
     assert(bx_init(&p, a, 512, 9) == BX_OK);
