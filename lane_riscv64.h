@@ -12,6 +12,10 @@
     "xori " r ", " r ", 1\n\t.endif\n\t"
 /* d = s ^ (s >> 32) or d = s ^ (s << 32), using d as the temporary. */
 #define BX_RV_SX(op, d, s) op " " d ", " s ", 32\n\txor " d ", " d ", " s "\n\t"
+/* The trap is non-resumable: the marker word 0x00000b17 decodes as auipc s6, 0,
+ * so execution past it would write s6. With compressed code elsewhere the marker
+ * may be only 2-byte aligned: read it with memcpy / copy_from_kernel_nofault,
+ * never a direct u32 load. */
 #define BX_RV_TRAP ".option push\n\t.option norvc\n\tebreak\n\t.option pop\n\t" \
     ".4byte 0x00000b17\n"
 
@@ -30,7 +34,7 @@ static inline bx_u64 bx_lane_ref_step(unsigned k, bx_u64 v)
     case 10: case 11: return v ^ 0xfffffffffffff900ULL; /* xori -0x700 */
     case 13: return v - 0x123U;
     case 16: return v + 0x3c5U;
-    default: return v - 0x7b1U;
+    case 20: default: return v - 0x7b1U;
     }
 }
 
@@ -40,7 +44,7 @@ static inline void bx_trap_now(bx_u64 kind, bx_u64 a, bx_u64 b, bx_u64 c)
     register bx_u64 a1 __asm__("a1") = b;
     register bx_u64 a2 __asm__("a2") = kind;
     register bx_u64 a3 __asm__("a3") = c;
-    __asm__ volatile(BX_RV_TRAP : : "r"(a0), "r"(a1), "r"(a2), "r"(a3) : "memory");
+    __asm__ volatile(BX_RV_TRAP : : "r"(a0), "r"(a1), "r"(a2), "r"(a3) : "s6", "memory");
 }
 
 static inline bx_u64 bx_lane(bx_u64 token, bx_u64 check, bx_u32 rounds,
@@ -50,6 +54,8 @@ static inline bx_u64 bx_lane(bx_u64 token, bx_u64 check, bx_u32 rounds,
     register bx_u64 *a1 __asm__("a1") = snapshot;
     register bx_u64 a2 __asm__("a2") = rounds;
     register bx_u64 a3 __asm__("a3") = check;
+    /* The bit check compares all of check >> 8 (not one bit), so a corrupted
+     * expected value above 1 is a memory mismatch: stricter than portable. */
     __asm__ volatile(
         "andi t0, a3, 7\n\t" "srl t1, a0, t0\n\t" "andi t1, t1, 1\n\t"
         "srli t2, a3, 8\n\t" "xor t1, t1, t2\n\t" "bnez t1, 8f\n\t"

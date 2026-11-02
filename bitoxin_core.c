@@ -111,7 +111,7 @@ int bx_run(struct bx_probe *p, bx_u32 budget)
             if (p->walked >= p->bits)
                 return fail(p, BX_STATE_ERROR, 0, p->bits - 1, p->walked);
             /* Traversal state is reloaded from memory every step (2018 design).
-             * Zero rounds would never end the AArch64 lane loop. */
+             * Zero rounds would never end the asm lane loops (AArch64, RISC-V). */
             rounds = *(volatile bx_u32 *)&p->rounds;
             if (!rounds || rounds > BX_MAX_ROUNDS)
                 return fail(p, BX_STATE_ERROR, 0, BX_MAX_ROUNDS, rounds);

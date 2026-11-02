@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Corrupt traversal state inside one bx_run call, after the entry check: the
  * per-step reloads must stop the walk before an out-of-range store (tap mask)
- * or a lane call with zero rounds (which never ends on AArch64). */
+ * or a lane call with zero rounds (which never ends in the asm lanes: AArch64
+ * and RISC-V). */
 #define _POSIX_C_SOURCE 200809L
 #include "bitoxin_core.h"
 #include "bitoxin_lane.h"
