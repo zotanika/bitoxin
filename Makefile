@@ -10,8 +10,8 @@ LANE = bitoxin_core.h bitoxin_lane.h $(wildcard lane_*.h)
 all: $(BUILD)/bitoxin-run
 $(BUILD):
 	mkdir -p $@
-$(BUILD)/bitoxin-run: tools/bitoxin-run.c bitoxin_core.c bitoxin_simd.h $(LANE) | $(BUILD)
-	$(CC) $(CFLAGS) $(WARN) -DBX_SIMD -I. tools/bitoxin-run.c bitoxin_core.c -pthread -o $@
+$(BUILD)/bitoxin-run: tools/bitoxin-run.c tools/bx_suspend.h bitoxin_core.c bitoxin_simd.h $(LANE) | $(BUILD)
+	$(CC) $(CFLAGS) $(WARN) -DBX_SIMD -I. -Itools tools/bitoxin-run.c bitoxin_core.c -pthread -o $@
 $(BUILD)/test-core: tests/test_core.c bitoxin_core.c $(LANE) | $(BUILD)
 	$(CC) $(CFLAGS) $(WARN) -I. tests/test_core.c bitoxin_core.c -o $@
 $(BUILD)/test-portable: tests/test_core.c bitoxin_core.c $(LANE) | $(BUILD)
@@ -22,12 +22,15 @@ $(BUILD)/test-audit: tests/test_audit.c bitoxin_core.c $(LANE) | $(BUILD)
 	$(CC) $(CFLAGS) $(WARN) -I. tests/test_audit.c bitoxin_core.c -o $@
 $(BUILD)/test-midrun: tests/test_midrun.c bitoxin_core.c $(LANE) | $(BUILD)
 	$(CC) $(CFLAGS) $(WARN) -I. tests/test_midrun.c -o $@
-test: $(BUILD)/test-core $(BUILD)/test-portable $(BUILD)/test-lfsr $(BUILD)/test-midrun $(BUILD)/test-audit $(BUILD)/bitoxin-run
+$(BUILD)/test-suspend: tests/test_suspend.c tools/bx_suspend.h | $(BUILD)
+	$(CC) $(CFLAGS) $(WARN) tests/test_suspend.c -o $@
+test: $(BUILD)/test-core $(BUILD)/test-portable $(BUILD)/test-lfsr $(BUILD)/test-midrun $(BUILD)/test-audit $(BUILD)/test-suspend $(BUILD)/bitoxin-run
 	$(BUILD)/test-core
 	$(BUILD)/test-portable
 	$(BUILD)/test-lfsr
 	$(BUILD)/test-midrun
 	$(BUILD)/test-audit
+	$(BUILD)/test-suspend
 	BITOXIN_RUNNER=$(abspath $(BUILD)/bitoxin-run) $(PYTHON) tests/test_runner.py
 	CC="$(CC)" $(PYTHON) tests/test_codegen.py
 	CC="$(CC)" CFLAGS="$(CFLAGS)" $(PYTHON) tests/test_lane_decode.py

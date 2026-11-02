@@ -5,7 +5,9 @@
 #define _DARWIN_C_SOURCE
 #endif
 #include "bitoxin_core.h"
+#include "bx_suspend.h"
 #include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
 #include <pthread.h>
 #include <sched.h>
@@ -22,9 +24,11 @@ _Static_assert(ATOMIC_INT_LOCK_FREE == 2, "signal flag must be lock-free");
 static atomic_int interrupted, abort_run, active;
 static unsigned nthreads = 1, kib = 1024, seed = 1, chunk = 4096, pause_ms, rounds = 1;
 static int churn;
-/* Filled by Tasks 10-11 (--trap, --per-cpu, suspend detection). */
+/* trap_mode is filled by Task 11 (--trap). */
 static int trap_mode, per_cpu;
 static uint64_t suspends, suspended_ms;
+static atomic_uint suspend_gen;
+static int homes[32];
 static uint64_t passes = 2;
 struct worker {
     pthread_t thread;
@@ -33,6 +37,7 @@ struct worker {
     size_t size;
     unsigned id;
     int home_cpu, cpu;
+    unsigned seen_gen;
     uint64_t churns, churn_failures, cpu_changes;
 };
 
@@ -69,9 +74,86 @@ static int rebind_buffer(struct worker *w)
     return BX_OK;
 }
 
+#if defined(__linux__) || defined(__APPLE__)
+static uint64_t clock_ns(clockid_t id)
+{
+    struct timespec t;
+    clock_gettime(id, &t);
+    return (uint64_t)t.tv_sec * 1000000000U + (uint64_t)t.tv_nsec;
+}
+
+/* `counts` minus `stops`, where `stops` is the clock that stops in suspend.
+ * Reading `stops` first keeps each difference at or above the true offset, so
+ * it never wraps below zero; the smallest of three tries drops a pair of reads
+ * split by preemption, which would otherwise look like a short suspend. */
+static uint64_t sleep_offset(clockid_t counts, clockid_t stops)
+{
+    uint64_t best = UINT64_MAX;
+    int i;
+    for (i = 0; i < 3; ++i) {
+        uint64_t before = clock_ns(stops);
+        uint64_t gap = clock_ns(counts) - before;
+        if (gap < best) best = gap;
+    }
+    return best;
+}
+#endif
+
+#if defined(__linux__)
+static uint64_t read_counter(const char *path)
+{
+    char text[32];
+    ssize_t n;
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    n = read(fd, text, sizeof(text) - 1);
+    close(fd);
+    if (n <= 0) return 0;
+    text[n] = 0;
+    return strtoull(text, NULL, 10);
+}
+#endif
+
+static void sample(struct bx_sleep_sample *s)
+{
+#if defined(__linux__)
+    s->sleep_ns = sleep_offset(CLOCK_BOOTTIME, CLOCK_MONOTONIC);
+    s->attempts = read_counter("/sys/power/suspend_stats/success") +
+                  read_counter("/sys/power/suspend_stats/fail");
+#elif defined(__APPLE__)
+    s->sleep_ns = sleep_offset(CLOCK_MONOTONIC_RAW, CLOCK_UPTIME_RAW);
+    s->attempts = 0;
+#else
+    s->sleep_ns = 0;
+    s->attempts = 0;
+#endif
+}
+
+static void track_cpu(struct worker *w)
+{
+#if defined(__linux__)
+    int cpu = sched_getcpu();
+    if (cpu >= 0 && w->cpu >= 0 && cpu != w->cpu) ++w->cpu_changes;
+    if (cpu >= 0) w->cpu = cpu;
+    if (per_cpu && cpu != w->home_cpu) {
+        cpu_set_t set;
+        CPU_ZERO(&set);
+        CPU_SET(w->home_cpu, &set);
+        /* EINVAL while the home CPU is offline; retried every chunk. */
+        (void)pthread_setaffinity_np(pthread_self(), sizeof(set), &set);
+        cpu = sched_getcpu();
+        if (cpu >= 0 && cpu != w->cpu) { ++w->cpu_changes; w->cpu = cpu; }
+    }
+#else
+    (void)w;
+#endif
+}
+
 static void *run_worker(void *arg)
 {
     struct worker *w = arg;
+    w->seen_gen = atomic_load(&suspend_gen);
+    track_cpu(w);
     while (!atomic_load(&interrupted) && !atomic_load(&abort_run) &&
            (!passes || w->probe.passes < passes)) {
         uint64_t before = w->probe.passes;
@@ -84,7 +166,17 @@ static void *run_worker(void *arg)
             atomic_store(&abort_run, 1);
             break;
         }
-        /* BITOXIN_WORKER_HOOK: Task 10 adds suspend audits and CPU tracking here. */
+        {
+            unsigned gen = atomic_load(&suspend_gen);
+            if (gen != w->seen_gen) {     /* audit the retained state after thaw */
+                w->seen_gen = gen;
+                if (bx_audit(&w->probe) != BX_OK) {
+                    atomic_store(&abort_run, 1);
+                    break;
+                }
+            }
+        }
+        track_cpu(w);
         if (pause_ms) {
             struct timespec delay = { pause_ms / 1000, (long)(pause_ms % 1000) * 1000000L };
             (void)nanosleep(&delay, NULL);
@@ -111,7 +203,7 @@ static int number(const char *s, uint64_t *out)
 static void usage(FILE *f)
 {
     fprintf(f, "bitoxin-run [--kib N] [--threads N] [--passes N] [--seed N] [--chunk N]\n"
-               "            [--pause-ms N] [--lane-rounds N] [--churn]\n"
+               "            [--pause-ms N] [--lane-rounds N] [--churn] [--per-cpu]\n"
                "Defaults: 1024 KiB/worker, 1 worker, 2 passes, seed 1, chunk 4096,\n"
                "no pause, 1 lane round.\n"
                "--kib 0 picks the largest power of two per worker, up to 256 MiB in total,\n"
@@ -119,6 +211,8 @@ static void usage(FILE *f)
                "overcommit or a cgroup memory limit the fill can be OOM-killed.\n"
                "--churn maps each new buffer before releasing the old one, so peak memory\n"
                "is up to twice the buffer total.\n"
+               "--per-cpu replaces --threads with one worker per allowed CPU (at most 32),\n"
+               "each kept on its CPU (Linux only).\n"
                "--passes 0 runs until SIGINT/SIGTERM. Output: one final JSON record.\n");
 }
 
@@ -179,7 +273,8 @@ int main(int argc, char **argv)
         const char *name = argv[a];
         if (!strcmp(name, "--help")) { usage(stdout); return 0; }
         if (!strcmp(name, "--churn")) { churn = 1; continue; }
-        /* BITOXIN_FLAG_HOOK: Tasks 10-11 add --per-cpu and --trap here. */
+        if (!strcmp(name, "--per-cpu")) { per_cpu = 1; continue; }
+        /* BITOXIN_FLAG_HOOK: Task 11 adds --trap here. */
         if (a + 1 == argc || !number(argv[++a], &value)) goto bad_args;
         if (!strcmp(name, "--passes")) { passes = value; continue; }
         if (value > UINT32_MAX) goto bad_args;
@@ -190,6 +285,19 @@ int main(int argc, char **argv)
         else if (!strcmp(name, "--pause-ms")) pause_ms = (unsigned)value;
         else if (!strcmp(name, "--lane-rounds")) rounds = (unsigned)value;
         else goto bad_args;
+    }
+    if (per_cpu) {
+#if defined(__linux__)
+        cpu_set_t allowed;
+        int c;
+        if (sched_getaffinity(0, sizeof(allowed), &allowed)) { perror("sched_getaffinity"); return 3; }
+        nthreads = 0;
+        for (c = 0; c < CPU_SETSIZE && nthreads < 32; ++c)
+            if (CPU_ISSET(c, &allowed)) homes[nthreads++] = c;
+#else
+        fprintf(stderr, "--per-cpu is supported on Linux only.\n");
+        return 2;
+#endif
     }
     if (kib > BX_MAX_BYTES / 1024 || (kib & (kib - 1)) || !nthreads || nthreads > 32 ||
         (uint64_t)kib * nthreads > 256U * 1024U || !seed || (kib && seed >= kib * 8192U) ||
@@ -217,7 +325,8 @@ int main(int argc, char **argv)
     for (i = 0; !setup_error && i < nthreads; ++i) {
         unsigned s = 1U + ((seed - 1U + i) % (kib * 8192U - 1U));
         workers[i].id = i;
-        workers[i].home_cpu = workers[i].cpu = -1;
+        workers[i].home_cpu = per_cpu ? homes[i] : -1;
+        workers[i].cpu = -1;
         if (bx_init(&workers[i].probe, workers[i].buffer, kib * 1024U, s) != BX_OK ||
             bx_set_lane(&workers[i].probe, rounds, trap_mode) != BX_OK)
             setup_error = 1;
@@ -235,7 +344,22 @@ int main(int argc, char **argv)
         ++created;
     }
     if (setup_error) atomic_store(&abort_run, 1);
-    /* BITOXIN_MONITOR_HOOK: Task 10 watches for suspend here while workers run. */
+    {
+        struct bx_sleep_sample prev, cur;
+        sample(&prev);
+        while (atomic_load(&active) > 0) {
+            struct timespec tick = { 0, 50L * 1000000L };
+            uint64_t slept;
+            (void)nanosleep(&tick, NULL);
+            sample(&cur);
+            if (bx_suspended(&prev, &cur, &slept)) {
+                ++suspends;
+                suspended_ms += slept / 1000000U;
+                atomic_fetch_add(&suspend_gen, 1);
+            }
+            prev = cur;
+        }
+    }
     for (i = 0; i < created; ++i) pthread_join(workers[i].thread, NULL);
     clock_gettime(CLOCK_MONOTONIC, &end);
     /* A recorded error always wins over an interruption. */

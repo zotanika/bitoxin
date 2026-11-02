@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import time
 import unittest
 
@@ -85,6 +86,27 @@ class RunnerTests(unittest.TestCase):
             data = json.loads(out)
             self.assertEqual(data['status'], 'interrupted')
             self.assertTrue(data['workers'][0]['operations'] > 0)
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux affinity API')
+    def test_per_cpu_pins_one_worker_per_allowed_cpu(self):
+        cpus = sorted(os.sched_getaffinity(0))[:32]
+        r = self.run_cli('--per-cpu', '--kib', '1', '--passes', '2')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        data = json.loads(r.stdout)
+        self.assertTrue(data['per_cpu'])
+        self.assertEqual([w['home_cpu'] for w in data['workers']], cpus)
+        for w in data['workers']:
+            self.assertEqual(w['cpu'], w['home_cpu'])
+
+    @unittest.skipIf(sys.platform.startswith('linux'), 'non-Linux behaviour')
+    def test_per_cpu_unsupported_elsewhere(self):
+        r = self.run_cli('--per-cpu')
+        self.assertEqual(r.returncode, 2)
+        self.assertIn('Linux only', r.stderr)
+
+    def test_no_suspend_reported_in_a_short_run(self):
+        data = json.loads(self.run_cli('--kib', '1', '--passes', '1').stdout)
+        self.assertEqual((data['suspends'], data['workers'][0]['audits']), (0, 0))
 
 if __name__ == '__main__':
     unittest.main()
