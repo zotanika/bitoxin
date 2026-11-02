@@ -20,6 +20,9 @@
 #include <linux/percpu.h>
 #include <linux/rcupdate.h>
 #include <linux/string.h>
+#include <linux/kdebug.h>
+#include <linux/uaccess.h>
+#include <linux/ptrace.h>
 #include "bitoxin_core.h"
 #include "bitoxin_hook.h"
 
@@ -74,6 +77,7 @@ struct bx_worker {
     unsigned int id;
     int home_cpu, cpu, seen_resume;
     u64 cpu_changes, churns, churn_failures;
+    atomic_t trapped;       /* set by the die notifier (trap mode) */
     struct mutex snapshot_lock;
     struct bx_snapshot snapshot;
 };
@@ -131,7 +135,8 @@ static DEFINE_PER_CPU(struct bx_hook_cpu, hook_cpu);
 static DEFINE_PER_CPU(u64, hook_calls);
 static DEFINE_PER_CPU(u64, hook_skips);
 static bool hook_ready;   /* release/acquire: publishes every CPU's probe */
-static atomic_t hook_failed = ATOMIC_INIT(0);   /* 0 none, 1 recording, 2 recorded */
+/* 0 none, 1 recording, 2 recorded (record mode), 3 trapped (cpu and site only) */
+static atomic_t hook_failed = ATOMIC_INIT(0);
 static struct { int cpu; char site[32]; struct bx_probe probe; } hook_failure;
 
 static void hook_fail(struct bx_hook_cpu *h, const char *site)
@@ -193,6 +198,110 @@ static void release_hook(void)
     for_each_possible_cpu(cpu) {
         kfree(per_cpu_ptr(&hook_cpu, cpu)->buffer);
         per_cpu_ptr(&hook_cpu, cpu)->buffer = NULL;
+    }
+}
+
+/* Trap mode: the probe traps before it can record, so the die notifier latches
+ * the failure (workers stop, the hook goes quiet), marks the trapping worker or
+ * hook for the status file, and prints one decoded BITOXIN_TRAP line. */
+static atomic_t trap_reported = ATOMIC_INIT(0);
+static bool die_registered;
+
+static unsigned long reg_at(struct pt_regs *regs, int n)
+{
+#if defined(__aarch64__)
+    return n >= 0 && n < 31 ? regs->regs[n] : 0;
+#elif defined(__riscv)
+    return n > 0 && n < 32 ? ((unsigned long *)regs)[n] : 0; /* slot n is x<n> */
+#else
+    (void)regs; (void)n;
+    return 0;
+#endif
+}
+
+/* brk #0xb17 / ebreak followed by the marker word: our trap, not BUG(). The
+ * marker is read only after the instruction matched, and never by a direct
+ * load (on RISC-V it may be only 2-byte aligned). */
+static bool is_bitoxin_trap(unsigned long pc)
+{
+    u32 insn = 0, marker = 0, expect = 0;
+#if defined(__aarch64__)
+    expect = 0xd4200000U | (0xb17U << 5);
+#elif defined(__riscv)
+    expect = 0x00100073U;
+#endif
+    if (!expect || copy_from_kernel_nofault(&insn, (const void *)pc, sizeof(insn)) ||
+        insn != expect ||
+        copy_from_kernel_nofault(&marker, (const void *)(pc + 4), sizeof(marker)))
+        return false;
+    return marker == BX_TRAP_MARKER;
+}
+
+/* Lane traps (kinds 1, 2): A = token, C = check word, bit = the visited bit.
+ * C-detected traps (kinds 3, 4): A = expected, B = observed, C = bit. The
+ * kernel has no FP/SIMD lane (kind 5). */
+static int bx_die(struct notifier_block *nb, unsigned long val, void *data)
+{
+    static const char *const kinds[] = { "none", "register", "memory", "data", "state" };
+    struct die_args *args = data;
+    struct pt_regs *regs = args ? args->regs : NULL;
+    struct bx_hook_cpu *h;
+    const struct bx_probe *p = NULL;
+    const char *site;
+    char who[64] = "unknown";
+    u64 kind, a, b, c, chain[BX_LANE_MAX], expected = 0, observed = 0;
+    unsigned int i;
+    int index = -1, cpu = raw_smp_processor_id();
+    (void)nb; (void)val;
+    if (!regs || !is_bitoxin_trap(instruction_pointer(regs)))
+        return NOTIFY_DONE;
+    atomic_set(&abort_run, 1);   /* the first failure latches globally */
+    h = raw_cpu_ptr(&hook_cpu);
+    site = READ_ONCE(h->site);
+    if (atomic_read(&h->busy) && site) {
+        snprintf(who, sizeof(who), "hook site=%s", site);
+        p = &h->probe;
+        if (atomic_cmpxchg(&hook_failed, 0, 1) == 0) {
+            hook_failure.cpu = cpu;
+            strscpy(hook_failure.site, site, sizeof(hook_failure.site));
+            atomic_set_release(&hook_failed, 3);
+        }
+    } else {
+        for (i = 0; workers && i < nworkers; ++i)
+            if (workers[i].task == current) {
+                snprintf(who, sizeof(who), "worker=%u", i);
+                p = &workers[i].probe;
+                atomic_set(&workers[i].trapped, 1);
+            }
+    }
+    /* One record; RISC-V KGDB builds also notify DIE_TRAP before DIE_OOPS. */
+    if (atomic_xchg(&trap_reported, 1))
+        return NOTIFY_DONE;
+    kind = reg_at(regs, bx_trap_regno(BX_TRAP_REG_KIND));
+    a = reg_at(regs, bx_trap_regno(BX_TRAP_REG_A));
+    b = reg_at(regs, bx_trap_regno(BX_TRAP_REG_B));
+    c = reg_at(regs, bx_trap_regno(BX_TRAP_REG_C));
+    if (kind == BX_LANE_REGISTER) {
+        for (i = 0; i < (unsigned int)bx_lane_count(); ++i)
+            chain[i] = reg_at(regs, bx_lane_regno((int)i));
+        index = bx_lane_decode(a, chain, &expected, &observed);
+    }
+    pr_emerg("BITOXIN_TRAP kind=%s %s cpu=%d pass=%llu bit=%u a=%016llx b=%016llx c=%016llx lane_reg=%s lane_expected=%016llx lane_observed=%016llx\n",
+             kind < ARRAY_SIZE(kinds) ? kinds[kind] : "unknown", who, cpu,
+             p ? p->passes : 0,
+             kind == BX_LANE_DATA || kind == BX_LANE_STATE ? (u32)c : (p ? p->cursor : 0),
+             a, b, c, bx_lane_reg_name(index), expected, observed);
+    return NOTIFY_DONE;
+}
+static struct notifier_block die_notifier = { .notifier_call = bx_die };
+
+/* Last in teardown: a worker can trap until release_workers() has stopped it,
+ * and bx_die() reads workers[] only for a trap of ours. */
+static void release_die(void)
+{
+    if (die_registered) {
+        unregister_die_notifier(&die_notifier);
+        die_registered = false;
     }
 }
 
@@ -327,6 +436,8 @@ static int status_show(struct seq_file *s, void *unused)
         mutex_lock(&workers[i].snapshot_lock);
         snap = workers[i].snapshot;
         mutex_unlock(&workers[i].snapshot_lock);
+        if (atomic_read(&workers[i].trapped))
+            snap.state = "trapped";
         seq_printf(s, "%s{\"id\":%u,\"state\":\"%s\",\"seed\":%u,\"home_cpu\":%d,\"cpu\":%d,\"cpu_changes\":%llu,\"churns\":%llu,\"churn_failures\":%llu,\"audits\":%llu,\"passes\":%llu,\"operations\":%llu,\"phase\":\"%s\",\"walked\":%u,\"verified\":%u,\"boottime_ns\":%llu,\"error\":\"%s\",\"error_bit\":%u,\"expected\":\"%016llx\",\"observed\":\"%016llx\",\"lane_reg\":\"%s\",\"lane_expected\":\"%016llx\",\"lane_observed\":\"%016llx\"}",
                    i ? "," : "", i, snap.state, snap.seed, snap.home_cpu, snap.cpu,
                    snap.cpu_changes, snap.churns, snap.churn_failures, snap.audits,
@@ -354,6 +465,9 @@ static int status_show(struct seq_file *s, void *unused)
                        p->error.bit, p->error.expected, p->error.observed,
                        bx_lane_reg_name(p->error.lane_index), p->error.lane_expected,
                        p->error.lane_observed);
+        } else if (failed == 3) {
+            seq_printf(s, ",\"trapped\":true,\"cpu\":%d,\"site\":\"%s\"",
+                       hook_failure.cpu, hook_failure.site);
         }
         seq_puts(s, "}");
     }
@@ -474,6 +588,12 @@ static int __init bitoxin_init(void)
     err = setup_hook();
     if (err)
         goto fail;
+    if (trap) {
+        err = register_die_notifier(&die_notifier);
+        if (err)
+            goto fail;
+        die_registered = true;
+    }
     err = register_pm_notifier(&pm_notifier);
     if (err)
         goto fail;
@@ -512,6 +632,7 @@ fail_notifier:
 fail:
     release_hook();
     release_workers();
+    release_die();
     return err;
 }
 
@@ -521,6 +642,7 @@ static void __exit bitoxin_exit(void)
     release_hook();
     unregister_pm_notifier(&pm_notifier);
     release_workers();
+    release_die();
     pr_info("bitoxin: unloaded pm_prepare=%lld pm_post=%lld failed=%d\n",
             atomic64_read(&pm_prepare), atomic64_read(&pm_post), atomic_read(&abort_run));
 }
